@@ -220,3 +220,53 @@ func TestInstanceOrder(t *testing.T) {
 		}
 	}
 }
+
+// TestNewRuntimeNilInstance verifies that a Provisioner returning a nil
+// Instance with no error aborts NewRuntime (guards the instances map against
+// nil values).
+func TestNewRuntimeNilInstance(t *testing.T) {
+	const modID = ModuleID("fe.test.newruntime.nilinst")
+	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error) {
+		return nil, nil // nil instance, nil error: a module bug
+	}))
+
+	mc := &feconfig.MachineConfig{
+		Instances: []feconfig.InstanceSpec{
+			{
+				InstanceID: "9b2e7d1c-3f4a-4b5c-8d6e-7f8a9b0c1d2e",
+				ModuleID:   string(modID),
+			},
+		},
+	}
+	_, err := NewRuntime(mc)
+	if err == nil {
+		t.Fatal("NewRuntime: expected error for nil instance")
+	}
+	if !strings.Contains(err.Error(), "nil instance") {
+		t.Fatalf("NewRuntime error = %v, want it to mention the nil instance", err)
+	}
+}
+
+// TestNewRuntimeCyclicDeps verifies NewRuntime rejects a config whose deps
+// form a cycle even when it bypasses feconfig.MachineConfigValidate (the
+// runtime must not trust its input ordering).
+func TestNewRuntimeCyclicDeps(t *testing.T) {
+	const modID = ModuleID("fe.test.newruntime.cycle")
+	RegisterModule(provMod(modID, nil))
+
+	a := "9b2e7d1c-3f4a-4b5c-8d6e-7f8a9b0c1d2e"
+	b := "7c1b4a6e-8f0d-4c9e-9a2b-1c3d4e5f6a7b"
+	mc := &feconfig.MachineConfig{
+		Instances: []feconfig.InstanceSpec{
+			{InstanceID: a, ModuleID: string(modID), Deps: []string{b}},
+			{InstanceID: b, ModuleID: string(modID), Deps: []string{a}},
+		},
+	}
+	_, err := NewRuntime(mc)
+	if err == nil {
+		t.Fatal("NewRuntime: expected error for cyclic deps")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("NewRuntime error = %v, want it to mention the cycle", err)
+	}
+}

@@ -27,11 +27,13 @@ func (t *lifecycleTrace) add(ev string) { t.events = append(t.events, ev) }
 func (t *lifecycleTrace) got() string { return strings.Join(t.events, " ") }
 
 // traceInstance is an Instance that records Start/Stop into a shared trace.
-// With startErr set, Start fails before recording anything.
+// With startErr set, Start fails before recording anything; with stopErr
+// set, Stop fails before recording anything.
 type traceInstance struct {
 	name     string
 	trace    *lifecycleTrace
 	startErr error
+	stopErr  error
 }
 
 func (t *traceInstance) Start() error {
@@ -43,6 +45,9 @@ func (t *traceInstance) Start() error {
 }
 
 func (t *traceInstance) Stop() error {
+	if t.stopErr != nil {
+		return t.stopErr
+	}
 	t.trace.add("stop:" + t.name)
 	return nil
 }
@@ -263,5 +268,114 @@ func TestRuntimeInstanceLookup(t *testing.T) {
 	}
 	if errors.Is(err, ErrInstanceNotFound) {
 		t.Fatalf("Instance(bad id) error = %v, want an invalid-id error, not ErrInstanceNotFound", err)
+	}
+}
+
+// registerChainStopFail is registerChain plus a Stop failure on the instance
+// whose id equals stopFailID.
+func registerChainStopFail(t *testing.T, modID ModuleID, trace *lifecycleTrace, stopFailID string, stopErr error) {
+	t.Helper()
+	names := map[string]string{
+		testChainLeafID: "a",
+		testChainMidID:  "b",
+		testChainTopID:  "c",
+	}
+	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error) {
+		var se error
+		if spec.InstanceID == stopFailID {
+			se = stopErr
+		}
+		return &traceInstance{name: names[spec.InstanceID], trace: trace, stopErr: se}, nil
+	}))
+}
+
+// TestRuntimeStopAggregatesErrors verifies Stop stops every started instance
+// even when one of them fails, and returns the failure via errors.Is.
+func TestRuntimeStopAggregatesErrors(t *testing.T) {
+	const modID = ModuleID("fe.test.lifecycle.stopagg")
+	boom := errors.New("stop boom")
+	trace := new(lifecycleTrace)
+	registerChainStopFail(t, modID, trace, testChainMidID, boom) // b fails to stop
+
+	mc := &feconfig.MachineConfig{
+		Instances: []feconfig.InstanceSpec{
+			{InstanceID: testChainTopID, ModuleID: string(modID), Deps: []string{testChainMidID}},
+			{InstanceID: testChainMidID, ModuleID: string(modID), Deps: []string{testChainLeafID}},
+			{InstanceID: testChainLeafID, ModuleID: string(modID)},
+		},
+	}
+	rt, err := NewRuntime(mc)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	if err := rt.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	err = rt.Stop()
+	if err == nil {
+		t.Fatal("Stop: expected error from failing instance")
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("Stop error = %v, want errors.Is(err, boom)", err)
+	}
+	// c and a were still stopped despite b failing mid-sequence.
+	if want := "start:a start:b start:c stop:c stop:a"; trace.got() != want {
+		t.Fatalf("trace = %q, want %q", trace.got(), want)
+	}
+}
+
+// TestRuntimeStartRollbackStopError verifies that when a Start failure
+// triggers a rollback and a rollback Stop also fails, the returned error
+// aggregates both the start error and the rollback error, and the Runtime is
+// left defunct.
+func TestRuntimeStartRollbackStopError(t *testing.T) {
+	const modID = ModuleID("fe.test.lifecycle.rollbackstop")
+	startBoom := errors.New("start boom")
+	stopBoom := errors.New("rollback stop boom")
+	trace := new(lifecycleTrace)
+	// b fails to start; a (already started) fails to stop during rollback.
+	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error) {
+		inst := &traceInstance{name: map[string]string{
+			testChainLeafID: "a",
+			testChainMidID:  "b",
+			testChainTopID:  "c",
+		}[spec.InstanceID], trace: trace}
+		switch spec.InstanceID {
+		case testChainMidID:
+			inst.startErr = startBoom
+		case testChainLeafID:
+			inst.stopErr = stopBoom
+		}
+		return inst, nil
+	}))
+
+	mc := &feconfig.MachineConfig{
+		Instances: []feconfig.InstanceSpec{
+			{InstanceID: testChainTopID, ModuleID: string(modID), Deps: []string{testChainMidID}},
+			{InstanceID: testChainMidID, ModuleID: string(modID), Deps: []string{testChainLeafID}},
+			{InstanceID: testChainLeafID, ModuleID: string(modID)},
+		},
+	}
+	rt, err := NewRuntime(mc)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+
+	err = rt.Start()
+	if err == nil {
+		t.Fatal("Start: expected error")
+	}
+	if !errors.Is(err, startBoom) {
+		t.Fatalf("Start error = %v, want errors.Is(err, startBoom)", err)
+	}
+	if !errors.Is(err, stopBoom) {
+		t.Fatalf("Start error = %v, want errors.Is(err, stopBoom) (rollback Stop failure joined)", err)
+	}
+	if rt.Context().Err() == nil {
+		t.Fatal("Runtime must be canceled after failed Start with rollback error")
+	}
+	if err := rt.Stop(); err != nil {
+		t.Fatalf("Stop after failed Start: %v", err)
 	}
 }
