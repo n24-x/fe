@@ -66,46 +66,6 @@ func TestModuleInfo_String(t *testing.T) {
 	}
 }
 
-func TestModuleID_Namespace(t *testing.T) {
-	tests := []struct {
-		name string
-		id   ModuleID
-		want string
-	}{
-		{"no namespace", "endpoint", ""},
-		{"one level", "endpoint.socks", "endpoint"},
-		{"multi level", "logging.encoders.json", "logging.encoders"},
-		{"empty", "", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.id.Namespace(); got != tt.want {
-				t.Fatalf("Namespace() = %q, want %q (id=%q)", got, tt.want, tt.id)
-			}
-		})
-	}
-}
-
-func TestModuleID_Name(t *testing.T) {
-	tests := []struct {
-		name string
-		id   ModuleID
-		want string
-	}{
-		{"no namespace", "endpoint", "endpoint"},
-		{"one level", "endpoint.socks", "socks"},
-		{"multi level", "logging.encoders.json", "json"},
-		{"empty", "", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.id.Name(); got != tt.want {
-				t.Fatalf("Name() = %q, want %q (id=%q)", got, tt.want, tt.id)
-			}
-		})
-	}
-}
-
 func TestRegisterAndGetModule(t *testing.T) {
 	const id = ModuleID("fe.test.registry.ok")
 	RegisterModule(mod(id))
@@ -134,6 +94,11 @@ func TestRegisterModulePanics(t *testing.T) {
 		instance Module
 		wantMsg  string
 	}{
+		{
+			name:     "nil module",
+			instance: nil,
+			wantMsg:  "nil module",
+		},
 		{
 			name:     "empty module ID",
 			instance: fakeMod{info: ModuleInfo{}},

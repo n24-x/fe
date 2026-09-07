@@ -10,26 +10,31 @@ import (
 	"github.com/n24-x/fe/feconfig"
 )
 
-// Runtime is the per-config runtime world of fe: it is created from one
-// MachineConfig and lives only as long as that config is active. On reload,
-// the Manager builds a brand-new Runtime and swaps it in (see manager.go).
+// Runtime is the per-config runtime world of fe: it is built from one
+// MachineConfig, lives only as long as that config is active, and is rebuilt
+// (a brand-new Runtime) whenever a new config replaces it.
 //
+// TODO(next):
 // Three orthogonal channels (see issue.md, review 4):
 //   - ctx: the Runtime's lifecycle signal (standard context). Instances that
 //     spawn goroutines select on ctx.Done(); Stop() cancels it.
 //   - Bus: state-change notifications (one-way, no return value).
 //   - (a future info container: identity/deps/logger handed to instances).
 type Runtime struct {
-	// ctx is the lifecycle context of this Runtime. It is created in
-	// NewRuntime and canceled by Stop() (and on failed construction).
-	// Instances receive ctx (read-only, via the future info container) so
-	// they can select on ctx.Done(); they must NOT receive cancel.
+	// ctx is the Runtime's lifecycle signal: created in NewRuntime, canceled
+	// by Stop() and on failed construction. Exposed read-only via Context()
+	// for instance goroutines to select on Done(); cancel never reaches them.
+	//
+	// TODO(next): may be removed — how instances receive the context is
+	// undecided (issue.md #6, info container).
 	ctx context.Context
-	// cancel cancels ctx. Owned solely by the Runtime: called at Stop()
-	// and on failed construction. Never exposed to instances — canceling
-	// the whole Runtime is a framework-level lifecycle decision (a single
-	// instance must not be able to kill every other instance). Mirrors
-	// caddy's cfg.cancelFunc, which modules cannot reach.
+
+	// cancel cancels ctx. Runtime-owned only (Stop, failed construction,
+	// rolled-back Start); never exposed to instances — one instance must
+	// not kill the whole Runtime.
+	//
+	// TODO(next): may be removed — ownership may move out of Runtime with
+	// the info container (issue.md #6).
 	cancel context.CancelFunc
 
 	Bus EventBus
@@ -37,33 +42,46 @@ type Runtime struct {
 	// cfg is the machine config this Runtime was built from (read-only).
 	cfg *feconfig.MachineConfig
 
-	// instances are the running instances, keyed by their config id.
+	// instances are the running instances, keyed by their id.
 	instances map[InstanceID]Instance
 
-	// mods is the set of module types used by this Runtime,
-	// derived from cfg's instances (mod_id de-duplicated).
-	// It is NOT a copy of the global registry; see issue.md D17.
-	// Filled during construction (NewRuntime).
+	// mods is the set of module types used by this Runtime.
 	mods map[ModuleID]bool
 
-	// startOrders is the order in which instances were created during
-	// NewRuntime (topological: deps first), recorded as instance ids. It is
-	// fixed at construction. Start walks it forward; Stop walks it in
-	// reverse (D4).
-	startOrders []InstanceID
+	// lifecycle is the Runtime's lifecycle bookkeeping.
+	//
+	// TODO(next):
+	// (issue.md D4/D21):
+	// the topological instance order plus the one-shot started/stopped
+	// flags. Grouped under one field to keep Runtime lean while it is
+	// still early.
+	lifecycle lifecycle
+}
 
-	// started reports that Start completed successfully: every instance is
-	// running.
+// lifecycle is the Runtime's lifecycle state machine (issue.md D4/D21):
+// created → started → stopped.
+type lifecycle struct {
+	// startOrder is the order in which instances were created during
+	// NewRuntime (topological: deps first), recorded as instance ids. It
+	// is fixed at construction. Start walks it forward; Stop walks it in
+	// reverse (D4).
+	startOrder []InstanceID
+
+	// started reports that Start completed successfully: every instance
+	// is running.
 	started bool
-	// stopped reports that the Runtime reached its terminal state: Stop was
-	// called, or a Start attempt failed and was rolled back. A stopped
+	// stopped reports that the Runtime reached its terminal state: Stop
+	// was called, or a Start attempt failed and was rolled back. A stopped
 	// Runtime cannot be started again.
 	stopped bool
 }
 
 // ValidateRuntimeConfig performs runtime-level semantic validation of a
 // machine config: every instance's mod_id must be registered AND produce
-// instances (implement Provisioner). This is flow step [2] (see cmd/main.go).
+// instances (implement Provisioner).
+//
+// TODO(next)
+// This is flow step [2] (see cmd/main.go).
 // Syntax/structure validation is feconfig.MachineConfigValidate's job.
 //
 // It is a pure check with no side effects; NewRuntime calls it first.
@@ -87,7 +105,7 @@ func ValidateRuntimeConfig(mc *feconfig.MachineConfig) error {
 //	ValidateRuntimeConfig (semantic validation)
 //	→ resolve the instance creation order via the dependency graph
 //	→ instantiate every instance in that order (Provision), recording the
-//	  creation order as startOrders
+//	  creation order in lifecycle.startOrder
 //
 // The returned Runtime is NOT started: instances are created but idle. The
 // caller starts them with Start (flow step [4]), or discards the Runtime
@@ -107,12 +125,12 @@ func NewRuntime(mc *feconfig.MachineConfig) (*Runtime, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	r := &Runtime{
-		ctx:         ctx,
-		cancel:      cancel,
-		cfg:         mc,
-		instances:   make(map[InstanceID]Instance, len(order)),
-		mods:        make(map[ModuleID]bool, len(order)),
-		startOrders: make([]InstanceID, 0, len(order)),
+		ctx:       ctx,
+		cancel:    cancel,
+		cfg:       mc,
+		instances: make(map[InstanceID]Instance, len(order)),
+		mods:      make(map[ModuleID]bool, len(order)),
+		lifecycle: lifecycle{startOrder: make([]InstanceID, 0, len(order))},
 	}
 
 	for _, spec := range order {
@@ -135,7 +153,7 @@ func NewRuntime(mc *feconfig.MachineConfig) (*Runtime, error) {
 		instID := InstanceID(id)
 		r.instances[instID] = inst
 		r.mods[ModuleID(spec.ModuleID)] = true
-		r.startOrders = append(r.startOrders, instID)
+		r.lifecycle.startOrder = append(r.lifecycle.startOrder, instID)
 	}
 
 	return r, nil
@@ -206,7 +224,7 @@ func (r *Runtime) provision(spec feconfig.InstanceSpec) (Instance, error) {
 
 // Start starts the Runtime: it transitions into the Running state (flow
 // step [4]) by starting every instance in creation order — deps first,
-// matching the order recorded in startOrders (D4).
+// matching the order recorded in lifecycle.startOrder (D4).
 //
 // Start is one-shot and failure-atomic (D3):
 //   - if an instance fails to start, every instance that already started is
@@ -222,15 +240,15 @@ func (r *Runtime) provision(spec feconfig.InstanceSpec) (Instance, error) {
 // Not safe for concurrent use with Stop.
 func (r *Runtime) Start() error {
 	switch {
-	case r.stopped:
+	case r.lifecycle.stopped:
 		return errors.New("fe: runtime stopped; cannot be started")
-	case r.started:
+	case r.lifecycle.started:
 		return errors.New("fe: runtime already started")
 	}
 
 	// Rollback buffer: instances started so far, stopped in reverse on error.
-	started := make([]InstanceID, 0, len(r.startOrders))
-	for _, id := range r.startOrders {
+	started := make([]InstanceID, 0, len(r.lifecycle.startOrder))
+	for _, id := range r.lifecycle.startOrder {
 		if err := r.instances[id].Start(); err != nil {
 			var rollbackErr error
 			for i := len(started) - 1; i >= 0; i-- {
@@ -241,7 +259,7 @@ func (r *Runtime) Start() error {
 				}
 			}
 			r.cancel()
-			r.stopped = true
+			r.lifecycle.stopped = true
 			if rollbackErr != nil {
 				return errors.Join(fmt.Errorf("fe: start: instance %s: %w", id, err), rollbackErr)
 			}
@@ -250,7 +268,7 @@ func (r *Runtime) Start() error {
 		started = append(started, id)
 	}
 
-	r.started = true
+	r.lifecycle.started = true
 	return nil
 }
 
@@ -272,21 +290,21 @@ func (r *Runtime) Start() error {
 //
 // Not safe for concurrent use with Start.
 func (r *Runtime) Stop() error {
-	if r.stopped {
+	if r.lifecycle.stopped {
 		return nil
 	}
 
 	var err error
-	if r.started {
-		for i := len(r.startOrders) - 1; i >= 0; i-- {
-			id := r.startOrders[i]
+	if r.lifecycle.started {
+		for i := len(r.lifecycle.startOrder) - 1; i >= 0; i-- {
+			id := r.lifecycle.startOrder[i]
 			if err2 := r.instances[id].Stop(); err2 != nil {
 				err = errors.Join(err, fmt.Errorf("fe: stop: instance %s: %w", id, err2))
 			}
 		}
-		r.started = false
+		r.lifecycle.started = false
 	}
-	r.stopped = true
+	r.lifecycle.stopped = true
 	r.cancel()
 	return err
 }

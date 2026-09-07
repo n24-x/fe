@@ -9,13 +9,16 @@ import (
 	dag "github.com/n24-x/dag-go"
 )
 
+// MachineConfig is the machine-readable configuration consumed by fe: the
+// complete list of Module Instances to create and run. It is typically
+// generated from a human-readable config by an adapter.
+//
+// TODO(next)
+// It deliberately has no global section: config shared by several instances
+// is expressed by those instances depending on a shared instance (see
+// issue.md D29).
 type MachineConfig struct {
-	Options   Options        `json:"options"`
 	Instances []InstanceSpec `json:"instances"`
-}
-
-type Options struct {
-	Version int `json:"version"`
 }
 
 type InstanceSpec struct {
@@ -63,9 +66,11 @@ func MachineConfigValidate(raw json.RawMessage) error {
 
 	// Build a dependency graph and reject cyclic configs.
 	g := dag.New[string]()
-	for _, inst := range mc.Instances {
-		inst := inst // copy: range variable is reused; &inst must point at a distinct node
-		if _, _, err := g.Add(&inst); err != nil {
+	for i := range mc.Instances {
+		// &mc.Instances[i] is each element's own address: the graph nodes
+		// must be distinct (and alias the config's specs, so g.At returns
+		// the original InstanceSpec).
+		if _, _, err := g.Add(&mc.Instances[i]); err != nil {
 			// TODO: dag.CycleError.Error() prints numeric NodeIDs (e.g. "[2 3 2]"),
 			// unreadable here. The cycle's nodes are available via e.Nodes for a
 			// future uuid-based message.

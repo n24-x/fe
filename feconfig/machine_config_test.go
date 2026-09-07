@@ -8,9 +8,6 @@ import (
 
 // validConfigRaw is a valid config; each negative case corrupts it locally.
 const validConfigRaw = `{
-    "options": {
-        "version": 1
-    },
     "instances": [
         {
             "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
@@ -59,62 +56,57 @@ func TestMachineConfigValidate(t *testing.T) {
 		},
 		{
 			name: "unknown top-level field",
-			raw:  `{"extra": 1, "options": {"version": 1}, "instances": []}`,
+			raw:  `{"extra": 1, "instances": []}`,
 			want: ErrMalformedConfig,
 		},
 		{
-			name: "unknown options field",
-			raw:  `{"options": {"version": 1, "log_level": "debug"}, "instances": []}`,
+			name: "legacy options key rejected",
+			raw:  `{"options": {"version": 1}, "instances": []}`,
 			want: ErrMalformedConfig,
 		},
 		{
 			name: "unknown instance field",
-			raw: `{"options": {"version": 1}, "instances": [{
+			raw: `{"instances": [{
 				"id": "` + validID + `", "mod_id": "dns.resolver",
 				"config": {}, "deps": [], "unexpected": true}]}`,
 			want: ErrMalformedConfig,
 		},
 		{
-			name: "version type mismatch",
-			raw:  `{"options": {"version": "1"}, "instances": []}`,
-			want: ErrMalformedConfig,
-		},
-		{
 			name: "empty mod_id",
-			raw: `{"options": {"version": 1}, "instances": [{
+			raw: `{"instances": [{
 				"id": "` + validID + `", "mod_id": "", "config": {}, "deps": []}]}`,
 			want: ErrMissingModuleID,
 		},
 		{
 			name: "invalid uuid id",
-			raw: `{"options": {"version": 1}, "instances": [{
+			raw: `{"instances": [{
 				"id": "not-a-uuid", "mod_id": "dns.resolver", "config": {}, "deps": []}]}`,
 			want: ErrInvalidID,
 		},
 		{
 			name: "id non-v4",
 			// valid UUID but version bits = 1 (high nibble of byte 6)
-			raw: `{"options": {"version": 1}, "instances": [{
+			raw: `{"instances": [{
 				"id": "3f2504e0-4f89-11d3-9a0c-0305e82c3301", "mod_id": "dns.resolver", "config": {}, "deps": []}]}`,
 			want: ErrInvalidID,
 		},
 		{
 			name: "dep references undefined instance",
-			raw: `{"options": {"version": 1}, "instances": [{
+			raw: `{"instances": [{
 				"id": "` + u1 + `", "mod_id": "dns.resolver", "config": {}, "deps": ["` + u2 + `"]}]}`,
 			want: ErrUndefinedDep,
 		},
 		{
 			name: "duplicate id",
 			// passes strict decoding and UUID checks, but declaring the same id twice is invalid
-			raw: `{"options": {"version": 1}, "instances": [
+			raw: `{"instances": [
 				{"id": "` + u1 + `", "mod_id": "dns.resolver", "config": {}, "deps": []},
 				{"id": "` + u1 + `", "mod_id": "dns.forwarder", "config": {}, "deps": []}]}`,
 			want: ErrDuplicateID,
 		},
 		{
 			name: "valid dep chain",
-			raw: `{"options": {"version": 1}, "instances": [
+			raw: `{"instances": [
 				{"id": "` + u1 + `", "mod_id": "dns.resolver", "config": {}, "deps": []},
 				{"id": "` + u2 + `", "mod_id": "dns.forwarder", "config": {}, "deps": ["` + u1 + `"]},
 				{"id": "` + u3 + `", "mod_id": "http.static", "config": {}, "deps": ["` + u2 + `"]}]}`,
@@ -122,7 +114,7 @@ func TestMachineConfigValidate(t *testing.T) {
 		{
 			name: "cyclic deps",
 			// a depends on b, b depends on a → cycle must be rejected
-			raw: `{"options": {"version": 1}, "instances": [
+			raw: `{"instances": [
 				{"id": "` + u1 + `", "mod_id": "dns.resolver", "config": {}, "deps": ["` + u2 + `"]},
 				{"id": "` + u2 + `", "mod_id": "dns.forwarder", "config": {}, "deps": ["` + u1 + `"]}]}`,
 			want: ErrCyclicDeps,
@@ -130,7 +122,7 @@ func TestMachineConfigValidate(t *testing.T) {
 		{
 			name: "self dep cycle",
 			// an instance depending on itself is a cycle
-			raw: `{"options": {"version": 1}, "instances": [
+			raw: `{"instances": [
 				{"id": "` + u1 + `", "mod_id": "dns.resolver", "config": {}, "deps": ["` + u1 + `"]}]}`,
 			want: ErrCyclicDeps,
 		},

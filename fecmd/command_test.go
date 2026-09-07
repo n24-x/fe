@@ -1,5 +1,4 @@
 package fecmd
-package fecmd
 
 import (
 	"errors"

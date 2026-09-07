@@ -13,8 +13,6 @@ var (
 	ErrModuleNotProvisioner = errors.New("fe: module does not produce instances (missing Provisioner)")
 
 	// ErrInstanceNotFound: Runtime.Instance found no instance with the given
-	// config id. A well-formed id that is missing usually means the
-	// referenced instance was never declared, or was referenced in a config
-	// but omitted from the referencing instance's deps (D11).
+	// config.
 	ErrInstanceNotFound = errors.New("fe: instance not found")
 )
