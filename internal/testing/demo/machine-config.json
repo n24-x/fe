@@ -1,0 +1,44 @@
+{
+    "options": {
+        "version": 1
+    },
+    "instances": [
+        {
+            "id": "9b2e7d1c-3f4a-4b5c-8d6e-7f8a9b0c1d2e",
+            "mod_id": "logger",
+            "config": {
+                "level": "INFO"
+            },
+            "deps": []
+        },
+        {
+            "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+            "mod_id": "dns",
+            "config": {
+                "enable_cache": true
+            },
+            "deps": []
+        },
+        {
+            "id": "7b1d2a5e-9f4c-4a8b-8c3d-2e5f1a6b7c8d",
+            "mod_id": "dns.forwarder",
+            "config": {
+                "dns_inst": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+                "upstream": "1.1.1.1"
+            },
+            "deps": [
+                "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
+            ]
+        },
+        {
+            "id": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d",
+            "mod_id": "endpoint.proxy.server",
+            "config": {
+                "domain_resolver": "7b1d2a5e-9f4c-4a8b-8c3d-2e5f1a6b7c8d"
+            },
+            "deps": [
+                "7b1d2a5e-9f4c-4a8b-8c3d-2e5f1a6b7c8d"
+            ]
+        }
+    ]
+}
