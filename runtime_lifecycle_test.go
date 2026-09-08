@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/n24-x/fe/feconfig"
@@ -378,4 +379,58 @@ func TestRuntimeStartRollbackStopError(t *testing.T) {
 	if err := rt.Stop(); err != nil {
 		t.Fatalf("Stop after failed Start: %v", err)
 	}
+}
+
+// TestRuntimeConcurrentReadAccess verifies the read-only concurrency contract:
+// while the Runtime is running (or stopping), instance goroutines may call
+// Instance() and Context() concurrently without locking — after NewRuntime
+// the instances map is never written again. Run with -race to catch a
+// violation.
+func TestRuntimeConcurrentReadAccess(t *testing.T) {
+	const modID = ModuleID("fe.test.lifecycle.concurrent")
+	RegisterModule(provMod(modID, nil))
+
+	ids := []string{testChainLeafID, testChainMidID, testChainTopID}
+	mc := &feconfig.MachineConfig{
+		Instances: []feconfig.InstanceSpec{
+			{InstanceID: testChainTopID, ModuleID: string(modID), Deps: []string{testChainMidID}},
+			{InstanceID: testChainMidID, ModuleID: string(modID), Deps: []string{testChainLeafID}},
+			{InstanceID: testChainLeafID, ModuleID: string(modID)},
+		},
+	}
+	rt, err := NewRuntime(mc)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	if err := rt.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Hammer Instance()/Context() from many goroutines while the Runtime is
+	// running; Stop concurrently on top (also exercises the read path during
+	// teardown). -race must report nothing.
+	stopDone := make(chan struct{})
+	go func() {
+		rt.Stop()
+		close(stopDone)
+	}()
+
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 200; i++ {
+				for _, id := range ids {
+					if _, err := rt.Instance(id); err != nil {
+						t.Errorf("concurrent Instance(%q): %v", id, err)
+						return
+					}
+				}
+				rt.Context() // read-only; must never race
+			}
+		}()
+	}
+	wg.Wait()
+	<-stopDone
 }

@@ -14,6 +14,22 @@ import (
 // MachineConfig, lives only as long as that config is active, and is rebuilt
 // (a brand-new Runtime) whenever a new config replaces it.
 //
+// # Concurrency contract
+//
+// Instances run concurrently once Start completes (their goroutines are
+// alive while Stop runs). Two rules keep that safe without locks:
+//
+//   - Instance goroutines may call [Runtime.Instance] and [Runtime.Context]
+//     concurrently: after NewRuntime the instances map is never written
+//     again, so concurrent reads are race-free. (Instances reach the
+//     Runtime only through the narrow [RuntimeAccess] view, which exposes
+//     exactly these two methods.)
+//   - Start/Stop are NOT safe for concurrent use with each other: they
+//     mutate the one-shot lifecycle state. The framework serializes them by
+//     construction — the Manager (Apply/Stop, mutex-guarded) or the
+//     application's single main goroutine drives the lifecycle; instance
+//     goroutines never hold a *Runtime and cannot reach Start/Stop.
+//
 // TODO(next):
 // Three orthogonal channels (see issue.md, review 4):
 //   - ctx: the Runtime's lifecycle signal (standard context). Instances that
