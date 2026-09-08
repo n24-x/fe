@@ -18,12 +18,12 @@ func (m fakeMod) FeModule() ModuleInfo { return m.info }
 // fakeProvMod is a Module WITH Provisioner (an instance-producing module).
 type fakeProvMod struct {
 	info ModuleInfo
-	fn   func(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error)
+	fn   func(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error)
 }
 
 func (m fakeProvMod) FeModule() ModuleInfo { return m.info }
 
-func (m fakeProvMod) Provision(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error) {
+func (m fakeProvMod) Provision(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error) {
 	if m.fn != nil {
 		return m.fn(spec, rt)
 	}
@@ -43,7 +43,7 @@ func mod(id ModuleID) fakeMod {
 
 // provMod returns a registerable instance-producing fake Module with the
 // given ID and optional Provision implementation.
-func provMod(id ModuleID, fn func(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error)) fakeProvMod {
+func provMod(id ModuleID, fn func(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error)) fakeProvMod {
 	return fakeProvMod{info: ModuleInfo{ID: id}, fn: fn}
 }
 

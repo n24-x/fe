@@ -34,7 +34,7 @@ type config struct {
 
 // Provision implements fe.Provisioner: it parses the spec's config and
 // returns a fresh, fully-formed Instance.
-func (Module) Provision(spec feconfig.InstanceSpec, rt *fe.Runtime) (fe.Instance, error) {
+func (Module) Provision(spec feconfig.InstanceSpec, rt fe.RuntimeAccess) (fe.Instance, error) {
 	var cfg config
 	if len(spec.Config) > 0 {
 		if err := json.Unmarshal(spec.Config, &cfg); err != nil {

@@ -9,21 +9,21 @@
 //
 //	[1] read machine config + syntax validation (feconfig.MachineConfigValidate)
 //	[2] runtime-level semantic validation (fe.ValidateRuntimeConfig)
-//	[3] build Runtime: resolve creation order via dag-go, then provision every
-//	    instance in that order (fe.NewRuntime). Instances are created but not
-//	    started yet.
-//	[4] start instances → Running (fe.Runtime.Start), then shut them down
-//	    again (fe.Runtime.Stop, reverse start order)
+//	[3]+  run the config through the Manager — the application-shaped path:
+//	    Manager.Apply (NewRuntime + Start) → stay up until SIGINT/SIGTERM →
+//	    Manager.Stop (reverse stop + graceful exit)
 //
-// Not started:
-//
-//	[5] reload (Manager.Apply)
+// stage [3]+ replaces the earlier manual NewRuntime/Start/Stop rehearsal: a
+// config that actually serves (e.g. the TCP-listening endpoint.proxy.server)
+// needs to stay up, which is exactly what the Manager is for.
 package main
 
 import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/n24-x/fe"
 	"github.com/n24-x/fe/feconfig"
@@ -68,26 +68,25 @@ func main() {
 	}
 	fmt.Println("stage [2] runtime semantic validation: OK")
 
-	// —— stage [3]: build Runtime (instantiate every instance, decode config) ——
-	rt, err := fe.NewRuntime(&mc)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "runtime instantiation failed: %v\n", err)
+	// —— stage [3]+: run through the Manager (application-shaped) ——
+	mgr := new(fe.Manager)
+	if err := mgr.Apply(&mc); err != nil {
+		fmt.Fprintf(os.Stderr, "runtime apply failed: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Println("stage [3] runtime instantiation: OK")
+	fmt.Println("stage [3]+ runtime apply: OK (running; Ctrl-C to stop)")
 
-	// —— stage [4]: start instances → Running, then shut down ——
-	if err := rt.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "runtime start failed: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println("stage [4] runtime start: OK (running)")
+	// Signal handling is the application's job, not the framework's: the
+	// Manager only provides the primitive (Apply/Stop). The demo shows the
+	// wiring: block on SIGINT/SIGTERM, then shut the active Runtime down
+	// gracefully.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	<-sig
 
-	if err := rt.Stop(); err != nil {
+	if err := mgr.Stop(); err != nil {
 		fmt.Fprintf(os.Stderr, "runtime stop failed: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Println("stage [4] runtime stop: OK")
-
-	// TODO stage [5]: reload (Manager.Apply).
+	fmt.Println("stage [3]+ runtime stop: OK")
 }

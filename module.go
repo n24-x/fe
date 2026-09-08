@@ -1,6 +1,7 @@
 package fe
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -76,10 +77,23 @@ func (mi ModuleInfo) String() string {
 	return string(mi.ID)
 }
 
+// RuntimeAccess is the module-visible view of the Runtime handed to a
+// Provision call: resolve a dependency instance, read the lifecycle context.
+// It deliberately hides the rest of the Runtime (lifecycle, registry, …).
+// *Runtime satisfies it; tests may fake it.
+type RuntimeAccess interface {
+	// Instance resolves a dependency instance by its config id.
+	Instance(id string) (Instance, error)
+	// Context returns the Runtime's lifecycle context, read-only.
+	Context() context.Context
+}
+
 // Provisioner is implemented by Modules that produce Instances. The module
 // author:
 //   - parses spec.Config (the framework does not decode it);
+//   - captures runtime needs — dependencies via rt.Instance, the lifecycle
+//     context via rt.Context — into the Instance's fields;
 //   - returns a fresh, self-contained Instance.
 type Provisioner interface {
-	Provision(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error)
+	Provision(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error)
 }

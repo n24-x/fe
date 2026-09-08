@@ -84,7 +84,7 @@ func (*fakeConfigInstance) Stop() error  { return nil }
 // module's job), and fills instances/mods.
 func TestNewRuntimeInstantiates(t *testing.T) {
 	const modID = ModuleID("fe.test.newruntime.inst")
-	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error) {
+	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error) {
 		var cfg struct {
 			Level string `json:"level"`
 		}
@@ -136,7 +136,7 @@ func TestNewRuntimeInstantiates(t *testing.T) {
 func TestNewRuntimeProvisionError(t *testing.T) {
 	const modID = ModuleID("fe.test.newruntime.proverr")
 	wantErr := errors.New("boom")
-	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error) {
+	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error) {
 		return nil, wantErr
 	}))
 
@@ -226,7 +226,7 @@ func TestInstanceOrder(t *testing.T) {
 // nil values).
 func TestNewRuntimeNilInstance(t *testing.T) {
 	const modID = ModuleID("fe.test.newruntime.nilinst")
-	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error) {
+	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error) {
 		return nil, nil // nil instance, nil error: a module bug
 	}))
 

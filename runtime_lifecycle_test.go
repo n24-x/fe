@@ -62,7 +62,7 @@ func registerChain(t *testing.T, modID ModuleID, trace *lifecycleTrace, failID s
 		testChainMidID:  "b",
 		testChainTopID:  "c",
 	}
-	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error) {
+	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error) {
 		var se error
 		if spec.InstanceID == failID {
 			se = failErr
@@ -280,7 +280,7 @@ func registerChainStopFail(t *testing.T, modID ModuleID, trace *lifecycleTrace, 
 		testChainMidID:  "b",
 		testChainTopID:  "c",
 	}
-	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error) {
+	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error) {
 		var se error
 		if spec.InstanceID == stopFailID {
 			se = stopErr
@@ -335,7 +335,7 @@ func TestRuntimeStartRollbackStopError(t *testing.T) {
 	stopBoom := errors.New("rollback stop boom")
 	trace := new(lifecycleTrace)
 	// b fails to start; a (already started) fails to stop during rollback.
-	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error) {
+	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error) {
 		inst := &traceInstance{name: map[string]string{
 			testChainLeafID: "a",
 			testChainMidID:  "b",

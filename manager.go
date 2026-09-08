@@ -6,13 +6,13 @@ import (
 	"github.com/n24-x/fe/feconfig"
 )
 
-// Manager owns the currently active Runtime.
+// Manager owns the currently active Runtime. Apply swaps in new Runtimes on
+// config change; Stop shuts the active one down on process exit.
 //
 // TODO(next):
-// Its only role today is architectural: it is the seam reserved for future
-// hot reload of the machine config (mirroring caddy's currentCtx /
-// changeConfig mechanism). The Runtime flow itself (NewRuntime) does not
-// depend on Manager. Nothing calls Manager yet.
+// Manager is the seam reserved for future hot reload of the machine config
+// (mirroring caddy's currentCtx / changeConfig mechanism). The Runtime flow
+// itself (NewRuntime) does not depend on Manager.
 type Manager struct {
 	mu sync.Mutex
 	// current is the active Runtime, if any.
@@ -46,4 +46,24 @@ func (m *Manager) Apply(mc *feconfig.MachineConfig) error {
 		old.Stop() // best-effort: the old tree is being replaced regardless
 	}
 	return nil
+}
+
+// Stop shuts the active Runtime down (reverse start order + context cancel).
+// This is the process-exit path: the application calls Stop on SIGINT/SIGTERM
+// after having started the config with Apply. It is a no-op when no Runtime
+// is active, so it is safe to call unconditionally on shutdown.
+//
+// Stop is the Manager-side counterpart of Apply: Apply starts a config and
+// makes it current; Stop ends the current one. (caddy's Stop is the
+// "antithesis of Run" — this is the fe equivalent.)
+func (m *Manager) Stop() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.current == nil {
+		return nil
+	}
+	err := m.current.Stop()
+	m.current = nil
+	return err
 }

@@ -57,7 +57,7 @@ func mgrChain(leafID, topID, modID string) *feconfig.MachineConfig {
 // The whole module can be made to fail on Start or Stop (failStart/failStop).
 func registerMgrMod(t *testing.T, modID ModuleID, names map[string]string, trace *lifecycleTrace, failStart, failStop error) {
 	t.Helper()
-	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error) {
+	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error) {
 		return &mgrInstance{name: names[spec.InstanceID], trace: trace, failStart: failStart, failStop: failStop}, nil
 	}))
 }
@@ -101,7 +101,7 @@ func TestManagerApplyStartFailureKeepsOld(t *testing.T) {
 	registerMgrMod(t, mod1, map[string]string{mgrLeaf1ID: "a1", mgrTop1ID: "b1"}, trace, nil, nil)
 	// Only the chain top (d1) fails to start, so the leaf (c1) starts first
 	// and must be rolled back.
-	RegisterModule(provMod(modFail, func(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error) {
+	RegisterModule(provMod(modFail, func(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error) {
 		inst := &mgrInstance{name: map[string]string{mgrLeaf2ID: "c1", mgrTop2ID: "d1"}[spec.InstanceID], trace: trace}
 		if spec.InstanceID == mgrTop2ID {
 			inst.failStart = boom
@@ -139,7 +139,7 @@ func TestManagerApplyBuildFailureKeepsOld(t *testing.T) {
 	boom := errors.New("provision boom")
 	trace := new(lifecycleTrace)
 	registerMgrMod(t, mod1, map[string]string{mgrLeaf1ID: "a1", mgrTop1ID: "b1"}, trace, nil, nil)
-	RegisterModule(provMod(modBad, func(spec feconfig.InstanceSpec, rt *Runtime) (Instance, error) {
+	RegisterModule(provMod(modBad, func(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error) {
 		return nil, boom
 	}))
 
@@ -190,5 +190,39 @@ func TestManagerApplyOldStopErrorIgnored(t *testing.T) {
 	// only the starts appear.
 	if want := "start:a1 start:b1 start:c1 start:d1"; trace.got() != want {
 		t.Fatalf("trace = %q, want %q", trace.got(), want)
+	}
+}
+
+// TestManagerStop verifies Stop shuts the active Runtime down in reverse
+// order, clears it, and is a no-op once nothing is active.
+func TestManagerStop(t *testing.T) {
+	const modID = ModuleID("fe.test.manager.stop")
+	trace := new(lifecycleTrace)
+	registerMgrMod(t, modID, map[string]string{mgrLeaf1ID: "a1", mgrTop1ID: "b1"}, trace, nil, nil)
+
+	m := new(Manager)
+	if err := m.Apply(mgrChain(mgrLeaf1ID, mgrTop1ID, string(modID))); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if want := "start:a1 start:b1"; trace.got() != want {
+		t.Fatalf("after Apply, trace = %q, want %q", trace.got(), want)
+	}
+
+	if err := m.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if want := "start:a1 start:b1 stop:b1 stop:a1"; trace.got() != want {
+		t.Fatalf("after Stop, trace = %q, want %q", trace.got(), want)
+	}
+	if m.current != nil {
+		t.Fatal("after Stop, Manager.current must be cleared")
+	}
+
+	// No active Runtime → second Stop is a no-op, not an error.
+	if err := m.Stop(); err != nil {
+		t.Fatalf("second Stop: expected nil (no active Runtime), got %v", err)
+	}
+	if want := "start:a1 start:b1 stop:b1 stop:a1"; trace.got() != want {
+		t.Fatalf("second Stop changed trace: %q, want %q", trace.got(), want)
 	}
 }

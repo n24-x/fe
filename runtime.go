@@ -337,3 +337,6 @@ func (r *Runtime) Instance(id string) (Instance, error) {
 func (r *Runtime) Context() context.Context {
 	return r.ctx
 }
+
+// Runtime satisfies RuntimeAccess: it can be passed to Provision directly.
+var _ RuntimeAccess = (*Runtime)(nil)
