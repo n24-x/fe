@@ -9,7 +9,7 @@ type InstanceID uuid.UUID
 // Instance is one running instance of a Module.
 //
 // It is a pure lifecycle with no parameters: everything an instance needs at
-// runtime (identity, dependency references, the lifecycle context) is captured
+// runtime (identity, dependency references, the lifecycle signal) is captured
 // into its fields during Provision.
 //
 // TODO(next):

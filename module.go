@@ -80,7 +80,7 @@ func (mi ModuleInfo) String() string {
 // author:
 //   - parses spec.Config (the framework does not decode it);
 //   - captures runtime needs — dependencies via rt.Instance, the lifecycle
-//     context via rt.Context — into the Instance's fields;
+//     signal via rt.Done — into the Instance's fields;
 //   - returns a fresh, self-contained Instance.
 type Provisioner interface {
 	Provision(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error)

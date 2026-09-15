@@ -1,7 +1,6 @@
 package dnsforwarder
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -14,14 +13,17 @@ import (
 )
 
 // fakeRT is a minimal fe.RuntimeAccess fake for module tests: Instance
-// returns a canned dependency (or error), Context a background context.
+// returns a canned dependency (or error).
 type fakeRT struct {
 	inst fe.Instance
 	err  error
 }
 
 func (f fakeRT) Instance(id string) (fe.Instance, error) { return f.inst, f.err }
-func (f fakeRT) Context() context.Context                { return context.Background() }
+
+// Done completes the interface; a fake Runtime is never stopped, so the signal
+// it hands out is never closed (and a nil channel never fires in a select).
+func (f fakeRT) Done() <-chan struct{} { return nil }
 
 // BusClient completes the interface; dnsforwarder does not use the event bus,
 // so a call would be a bug in the module under test.

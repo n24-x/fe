@@ -61,10 +61,14 @@ func TestRuntimeAccessSealed(t *testing.T) {
 }
 
 // TestRuntimeAccessSurface verifies the module-visible surface stays exactly
-// the three read-only methods. It is the compile-time half of the seal: adding
-// anything that drives the lifecycle (Start, Stop, Reload, …) to
-// RuntimeAccess would put it in every module's hands, and this test fails
-// first.
+// the three read-only methods, and that the channel it hands out stays
+// receive-only.
+//
+// It is the compile-time half of the seal, guarding the two ways the surface
+// could stop being read-only: adding a method that drives the lifecycle
+// (Start, Stop, Reload, …) would put it in every module's hands, and widening
+// Done to a bidirectional channel would let a module close the Runtime's
+// lifecycle signal. Both fail here first.
 func TestRuntimeAccessSurface(t *testing.T) {
 	it := reflect.TypeOf((*fe.RuntimeAccess)(nil)).Elem()
 
@@ -74,8 +78,29 @@ func TestRuntimeAccessSurface(t *testing.T) {
 	}
 	sort.Strings(got)
 
-	want := []string{"BusClient", "Context", "Instance"}
+	want := []string{"BusClient", "Done", "Instance"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("RuntimeAccess methods = %v, want %v", got, want)
+	}
+
+	// Direction is what makes the signal safe to hand out: only the sender of
+	// a channel may close it, so a module holding <-chan struct{} cannot take
+	// the Runtime down — the guarantee the unexported cancel func used to give.
+	done, ok := it.MethodByName("Done")
+	if !ok {
+		t.Fatal("RuntimeAccess has no Done method")
+	}
+	if n := done.Type.NumOut(); n != 1 {
+		t.Fatalf("Done returns %d values, want 1", n)
+	}
+	ch := done.Type.Out(0)
+	if ch.Kind() != reflect.Chan {
+		t.Fatalf("Done returns %s, want a channel", ch)
+	}
+	if ch.ChanDir() != reflect.RecvDir {
+		t.Fatalf("Done returns %s, want receive-only (<-chan struct{}): a bidirectional channel lets a module close the Runtime's lifecycle signal", ch)
+	}
+	if elem := ch.Elem(); elem.Kind() != reflect.Struct || elem.NumField() != 0 {
+		t.Fatalf("Done returns %s, want <-chan struct{}", ch)
 	}
 }

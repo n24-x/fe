@@ -2,7 +2,6 @@ package endpointproxy
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -25,7 +24,10 @@ type fakeRT struct {
 }
 
 func (f fakeRT) Instance(id string) (fe.Instance, error) { return f.inst, f.err }
-func (f fakeRT) Context() context.Context                { return context.Background() }
+
+// Done completes the interface; a fake Runtime is never stopped, so the signal
+// it hands out is never closed (and a nil channel never fires in a select).
+func (f fakeRT) Done() <-chan struct{} { return nil }
 
 // BusClient completes the interface; endpointproxy does not use the event bus,
 // so a call would be a bug in the module under test.

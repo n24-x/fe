@@ -26,8 +26,8 @@ type Manager struct {
 // This is the future hot-reload entry point (issue.md D5/D7).
 // Build-then-swap (caddy's model): NewRuntime provisions every instance and
 // Start runs them. If either fails, the new Runtime is discarded — a failed
-// Start has already stopped what it started and canceled its context — and
-// the old Runtime keeps running untouched.
+// Start has already stopped what it started and closed its lifecycle signal —
+// and the old Runtime keeps running untouched.
 func (m *Manager) Apply(mc *feconfig.MachineConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -48,7 +48,7 @@ func (m *Manager) Apply(mc *feconfig.MachineConfig) error {
 	return nil
 }
 
-// Stop shuts the active Runtime down (reverse start order + context cancel).
+// Stop shuts the active Runtime down (reverse start order + lifecycle signal).
 // This is the process-exit path: the application calls Stop on SIGINT/SIGTERM
 // after having started the config with Apply. It is a no-op when no Runtime
 // is active, so it is safe to call unconditionally on shutdown.

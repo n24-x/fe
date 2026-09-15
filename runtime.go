@@ -1,7 +1,6 @@
 package fe
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"uuid"
@@ -20,7 +19,7 @@ import (
 // Instances run concurrently once Start completes (their goroutines are
 // alive while Stop runs). Two rules keep that safe without locks:
 //
-//   - Instance goroutines may call [Runtime.Instance], [Runtime.Context] and
+//   - Instance goroutines may call [Runtime.Instance], [Runtime.Done] and
 //     [Runtime.BusClient] concurrently: after NewRuntime the instances map is
 //     never written again, so concurrent reads are race-free, and the Bus
 //     guards its own client list. (Instances reach the Runtime only through
@@ -34,26 +33,22 @@ import (
 //
 // TODO(next):
 // Three orthogonal channels (see issue.md, review 4):
-//   - ctx: the Runtime's lifecycle signal (standard context). Instances that
-//     spawn goroutines select on ctx.Done(); Stop() cancels it.
+//   - done: the Runtime's lifecycle signal. Instances that spawn goroutines
+//     select on it; cleanup closes it.
 //   - Bus: state-change notifications (one-way, no return value).
 //   - (a future info container: identity/deps/logger handed to instances).
 type Runtime struct {
-	// ctx is the Runtime's lifecycle signal: created in NewRuntime, canceled
-	// by Stop() and on failed construction. Exposed read-only via Context()
-	// for instance goroutines to select on Done(); cancel never reaches them.
+	// done is the Runtime's lifecycle signal: created in NewRuntime, closed by
+	// cleanup. Instance goroutines select on it to learn that the Runtime is
+	// going away.
 	//
-	// TODO(next): may be removed — how instances receive the context is
-	// undecided (issue.md #6, info container).
-	ctx context.Context
-
-	// cancel cancels ctx. Runtime-owned only (Stop, failed construction,
-	// rolled-back Start); never exposed to instances — one instance must
-	// not kill the whole Runtime.
-	//
-	// TODO(next): may be removed — ownership may move out of Runtime with
-	// the info container (issue.md #6).
-	cancel context.CancelFunc
+	// It is held bidirectionally but only ever handed out receive-only (see
+	// [RuntimeAccess.Done]), so the direction itself stops a module from
+	// closing it: the same guarantee the unexported cancel func used to give,
+	// now enforced by the type system instead of by convention. Unlike
+	// context.Context.Done it is never nil, so selecting on it cannot block
+	// forever.
+	done chan struct{}
 
 	// bus is the Runtime's state-change notification channel (issue.md §7):
 	// built by NewRuntime from the config's Options.Bus, released by cleanup.
@@ -81,8 +76,8 @@ type Runtime struct {
 }
 
 // RuntimeAccess is the module-visible view of the Runtime handed to a
-// Provision call: resolve a dependency instance, read the lifecycle context,
-// open a Bus client. It deliberately hides the rest of the Runtime
+// Provision call: resolve a dependency instance, observe the lifecycle
+// signal, open a Bus client. It deliberately hides the rest of the Runtime
 // (lifecycle, registry, …) and sits next to [Runtime], its only real
 // implementation.
 //
@@ -92,8 +87,10 @@ type Runtime struct {
 type RuntimeAccess interface {
 	// Instance resolves a dependency instance by its config id.
 	Instance(id string) (inst Instance, err error)
-	// Context returns the Runtime's lifecycle context, read-only.
-	Context() context.Context
+	// Done returns the Runtime's lifecycle signal, receive-only: it is closed
+	// when the Runtime goes away (Stop, a failed construction, a rolled-back
+	// Start). It is never nil, so a select on it cannot block forever.
+	Done() (done <-chan struct{})
 	// BusClient opens a Bus client for the calling instance. name is a label
 	// for a human reading debug logs and client-scoped errors; it is NOT
 	// required to be unique — the framework does not route by it.
@@ -112,7 +109,7 @@ type RuntimeAccess interface {
 type moduleView struct{ r *Runtime }
 
 func (v moduleView) Instance(id string) (Instance, error) { return v.r.Instance(id) }
-func (v moduleView) Context() context.Context             { return v.r.Context() }
+func (v moduleView) Done() <-chan struct{}                { return v.r.Done() }
 
 func (v moduleView) BusClient(name string) (*eventbus.Client, error) {
 	return v.r.BusClient(name)
@@ -169,7 +166,8 @@ func ValidateRuntimeConfig(mc *feconfig.MachineConfig) error {
 //
 // The returned Runtime is NOT started: instances are created but idle. The
 // caller starts them with Start (flow step [4]), or discards the Runtime
-// with Stop, which releases its context and Bus without starting anything.
+// with Stop, which releases its lifecycle signal and Bus without starting
+// anything.
 //
 // On failure NewRuntime returns no Runtime for the caller to Stop, so every
 // error path below cleans up after itself before returning (see cleanup).
@@ -183,13 +181,8 @@ func NewRuntime(mc *feconfig.MachineConfig) (*Runtime, error) {
 		return nil, fmt.Errorf("fe: new runtime: resolving instance order: %w", err)
 	}
 
-	// Lifecycle context: canceled when construction fails below, or when
-	// the Runtime is stopped (Stop). Instances' goroutines select on it.
-	ctx, cancel := context.WithCancel(context.Background())
-
 	r := &Runtime{
-		ctx:       ctx,
-		cancel:    cancel,
+		done:      make(chan struct{}),
 		cfg:       mc,
 		bus:       eventbus.NewWithOptions(mc.Options.Bus),
 		instances: make(map[InstanceID]Instance, len(order)),
@@ -200,7 +193,7 @@ func NewRuntime(mc *feconfig.MachineConfig) (*Runtime, error) {
 	for _, spec := range order {
 		id, err := uuid.Parse(spec.InstanceID)
 		if err != nil {
-			r.cleanup() // construction failed: nothing is started, so ctx + Bus
+			r.cleanup() // construction failed: nothing started, so close signal + Bus
 			return nil, fmt.Errorf("fe: new runtime: invalid instance id %q: %w", spec.InstanceID, err)
 		}
 
@@ -298,10 +291,10 @@ func (r *Runtime) provision(spec feconfig.InstanceSpec) (Instance, error) {
 //     stopped again, in reverse start order, and the error is returned. The
 //     failing instance itself is not stopped — it never reached Started
 //     (mirrors caddy, whose Start-failure rollback stops only the started
-//     apps); the context cancel signals any goroutines it may have spawned
-//     to wind down (there is no resource layer to release — D25).
-//   - after a failed Start the Runtime is left stopped/defunct: the context
-//     is canceled, and Start refuses to run again.
+//     apps); closing the lifecycle signal tells any goroutines it may have
+//     spawned to wind down (there is no resource layer to release — D25).
+//   - after a failed Start the Runtime is left stopped/defunct: the lifecycle
+//     signal is closed, and Start refuses to run again.
 //   - starting an already-started (or already-stopped) Runtime is an error.
 //
 // Not safe for concurrent use with Stop.
@@ -325,8 +318,8 @@ func (r *Runtime) Start() error {
 						fmt.Errorf("fe: start: rollback stop of instance %s: %w", stopID, err2))
 				}
 			}
-			// Rollback done: the Runtime is defunct (D3), so release ctx and
-			// Bus; Start refuses to run again.
+			// Rollback done: the Runtime is defunct (D3), so release the
+			// signal and the Bus; Start refuses to run again.
 			r.lifecycle.stopped = true
 			r.cleanup()
 			if rollbackErr != nil {
@@ -342,7 +335,7 @@ func (r *Runtime) Start() error {
 }
 
 // Stop shuts the Runtime down: it stops every started instance in reverse
-// start order, then cleans up — cancels the lifecycle context so instance
+// start order, then cleans up — closes the lifecycle signal so instance
 // goroutines wind down, and releases the Bus.
 //
 // Rules:
@@ -350,14 +343,18 @@ func (r *Runtime) Start() error {
 //     or a rolled-back Start) are not stopped — they never began. There is
 //     nothing to release for them either: by contract (D25) Provision is
 //     side-effect-free (config parsing + dependency capture only), so all
-//     resources are Start/Stop-scoped; the context cancel still signals any
-//     goroutines they may have spawned.
+//     resources are Start/Stop-scoped; closing the signal still tells any
+//     goroutines they may have spawned that the Runtime is gone.
 //   - Stop is idempotent: it may be called any number of times, before or
 //     after Start, and after a failed Start. Only the first call releases
-//     anything; the ones after it are no-ops.
+//     anything — the ones after it return early, which is also what keeps the
+//     lifecycle signal from being closed twice.
 //   - errors from individual Stop calls are aggregated with errors.Join.
 //
-// Not safe for concurrent use with Start.
+// Not safe for concurrent use with Start or with another Stop: the early
+// return above is the only thing standing between a second call and closing
+// an already-closed channel, so callers must serialize (the Manager does,
+// under its mutex).
 func (r *Runtime) Stop() error {
 	if r.lifecycle.stopped {
 		return nil
@@ -378,16 +375,22 @@ func (r *Runtime) Stop() error {
 	return err
 }
 
-// cleanup releases the framework-owned resources of a Runtime: it cancels the
-// lifecycle context and closes the Bus (which closes every client it handed
-// out). Both are idempotent, so calling it repeatedly is harmless.
+// cleanup releases the framework-owned resources of a Runtime: it closes the
+// lifecycle signal (waking every instance goroutine that selects on it) and
+// closes the Bus (which closes every client it handed out).
+//
+// It must run exactly once per Runtime — unlike the cancel func it replaces,
+// closing an already-closed channel panics. No sync.Once is needed because the
+// callers already guarantee it: NewRuntime's failure paths return nil, so that
+// Runtime reaches nobody else, and both Start's rollback and Stop mark the
+// Runtime stopped, which is the guard Stop checks.
 //
 // It is the teardown of everything NewRuntime acquires, so it serves both
 // kinds of caller: NewRuntime itself, on every construction failure — the
 // caller gets no Runtime to Stop — and Stop, as its last step, once the
 // instances have been stopped.
 func (r *Runtime) cleanup() {
-	r.cancel()
+	close(r.done)
 	r.bus.Close()
 }
 
@@ -412,12 +415,15 @@ func (r *Runtime) Instance(id string) (Instance, error) {
 	return inst, nil
 }
 
-// Context returns the Runtime's lifecycle context, read-only. Instance
-// goroutines select on Context().Done() to know when to stop. Stop and a
-// rolled-back Start cancel it. Instances never receive the cancel function:
-// canceling the whole Runtime is a framework-level lifecycle decision.
-func (r *Runtime) Context() context.Context {
-	return r.ctx
+// Done returns the Runtime's lifecycle signal, receive-only. Instance
+// goroutines select on it to know when to stop; Stop, a failed construction
+// and a rolled-back Start all close it.
+//
+// Receive-only is deliberate: a module cannot close a channel it only receives
+// from, so one instance cannot take the whole Runtime down — the rule the
+// unexported cancel func used to encode, now enforced by the type system.
+func (r *Runtime) Done() <-chan struct{} {
+	return r.done
 }
 
 // BusClient opens a new Bus client named name, for the calling instance to

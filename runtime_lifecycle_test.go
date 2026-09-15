@@ -1,7 +1,6 @@
 package fe
 
 import (
-	"context"
 	"errors"
 	"runtime"
 	"strings"
@@ -11,6 +10,16 @@ import (
 
 	"github.com/n24-x/fe/feconfig"
 )
+
+// isClosed reports whether ch has been closed (non-blocking probe).
+func isClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
 
 // Well-known instance ids for the three-instance dependency chain used by
 // the lifecycle tests: leaf → mid → top.
@@ -99,8 +108,8 @@ func TestRuntimeStartStopOrder(t *testing.T) {
 	if want := "start:a start:b start:c"; trace.got() != want {
 		t.Fatalf("after Start, trace = %q, want %q", trace.got(), want)
 	}
-	if rt.Context().Err() != nil {
-		t.Fatalf("Context canceled while running: %v", rt.Context().Err())
+	if isClosed(rt.Done()) {
+		t.Fatal("lifecycle signal closed while running")
 	}
 
 	if err := rt.Stop(); err != nil {
@@ -109,14 +118,15 @@ func TestRuntimeStartStopOrder(t *testing.T) {
 	if want := "start:a start:b start:c stop:c stop:b stop:a"; trace.got() != want {
 		t.Fatalf("after Stop, trace = %q, want %q", trace.got(), want)
 	}
-	if err := rt.Context().Err(); err != context.Canceled {
-		t.Fatalf("after Stop, Context().Err() = %v, want context.Canceled", err)
+	if !isClosed(rt.Done()) {
+		t.Fatal("after Stop, the lifecycle signal is not closed")
 	}
 }
 
 // TestRuntimeStartFailureRollsBack verifies a Start failure stops the
-// already-started instances in reverse order (D3), cancels the context, and
-// leaves the Runtime defunct (Stop is a no-op, Start refuses again).
+// already-started instances in reverse order (D3), closes the lifecycle
+// signal, and leaves the Runtime defunct (Stop is a no-op, Start refuses
+// again).
 func TestRuntimeStartFailureRollsBack(t *testing.T) {
 	const modID = ModuleID("fe.test.lifecycle.rollback")
 	boom := errors.New("boom")
@@ -147,8 +157,8 @@ func TestRuntimeStartFailureRollsBack(t *testing.T) {
 	if want := "start:a stop:a"; trace.got() != want {
 		t.Fatalf("after failed Start, trace = %q, want %q", trace.got(), want)
 	}
-	if err := rt.Context().Err(); err != context.Canceled {
-		t.Fatalf("after failed Start, Context().Err() = %v, want context.Canceled", err)
+	if !isClosed(rt.Done()) {
+		t.Fatal("after failed Start, the lifecycle signal is not closed")
 	}
 
 	// The Runtime is defunct: Stop must not re-stop a, and Start must refuse.
@@ -205,7 +215,7 @@ func TestRuntimeStartStopGuards(t *testing.T) {
 }
 
 // TestRuntimeStopBeforeStart verifies Stop on a never-started Runtime only
-// cancels the context and does not stop provisioned-but-never-started
+// closes the lifecycle signal and does not stop provisioned-but-never-started
 // instances.
 func TestRuntimeStopBeforeStart(t *testing.T) {
 	const modID = ModuleID("fe.test.lifecycle.stopbefore")
@@ -228,8 +238,8 @@ func TestRuntimeStopBeforeStart(t *testing.T) {
 	if trace.got() != "" {
 		t.Fatalf("Stop before Start stopped instances: trace = %q", trace.got())
 	}
-	if err := rt.Context().Err(); err != context.Canceled {
-		t.Fatalf("Context().Err() = %v, want context.Canceled", err)
+	if !isClosed(rt.Done()) {
+		t.Fatal("Stop before Start left the lifecycle signal open")
 	}
 	if err := rt.Start(); err == nil {
 		t.Fatal("Start after Stop: expected error")
@@ -375,8 +385,8 @@ func TestRuntimeStartRollbackStopError(t *testing.T) {
 	if !errors.Is(err, stopBoom) {
 		t.Fatalf("Start error = %v, want errors.Is(err, stopBoom) (rollback Stop failure joined)", err)
 	}
-	if rt.Context().Err() == nil {
-		t.Fatal("Runtime must be canceled after failed Start with rollback error")
+	if !isClosed(rt.Done()) {
+		t.Fatal("the lifecycle signal must be closed after a failed Start with a rollback error")
 	}
 	if err := rt.Stop(); err != nil {
 		t.Fatalf("Stop after failed Start: %v", err)
@@ -385,7 +395,7 @@ func TestRuntimeStartRollbackStopError(t *testing.T) {
 
 // TestRuntimeConcurrentReadAccess verifies the read-only concurrency contract:
 // while the Runtime is running (or stopping), instance goroutines may call
-// Instance() and Context() concurrently without locking — after NewRuntime
+// Instance() and Done() concurrently without locking — after NewRuntime
 // the instances map is never written again. Run with -race to catch a
 // violation.
 func TestRuntimeConcurrentReadAccess(t *testing.T) {
@@ -408,7 +418,7 @@ func TestRuntimeConcurrentReadAccess(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// Hammer Instance()/Context() from many goroutines while the Runtime is
+	// Hammer Instance()/Done() from many goroutines while the Runtime is
 	// running; Stop concurrently on top (also exercises the read path during
 	// teardown). -race must report nothing.
 	stopDone := make(chan struct{})
@@ -429,7 +439,7 @@ func TestRuntimeConcurrentReadAccess(t *testing.T) {
 						return
 					}
 				}
-				rt.Context() // read-only; must never race
+				rt.Done() // read-only; must never race
 			}
 		}()
 	}
