@@ -27,7 +27,7 @@ import (
 //     methods.)
 //   - Start/Stop are NOT safe for concurrent use with each other: they
 //     mutate the one-shot lifecycle state. The framework serializes them by
-//     construction — the Manager (Apply/Stop, mutex-guarded) or the
+//     construction — the App ([App.Start]/[App.Stop], mutex-guarded) or the
 //     application's single main goroutine drives the lifecycle; instance
 //     goroutines never hold a *Runtime and cannot reach Start/Stop.
 //
@@ -353,8 +353,8 @@ func (r *Runtime) Start() error {
 //
 // Not safe for concurrent use with Start or with another Stop: the early
 // return above is the only thing standing between a second call and closing
-// an already-closed channel, so callers must serialize (the Manager does,
-// under its mutex).
+// an already-closed channel, so callers must serialize (the App does, under
+// its mutex).
 func (r *Runtime) Stop() error {
 	if r.lifecycle.stopped {
 		return nil

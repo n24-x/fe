@@ -10,13 +10,13 @@
 //	[1] parse the machine config (feconfig.ParseHelper, strict) + config
 //	    semantic validation (feconfig.MachineConfigValidate)
 //	[2] runtime-level semantic validation (fe.ValidateRuntimeConfig)
-//	[3]+  run the config through the Manager — the application-shaped path:
-//	    Manager.Apply (NewRuntime + Start) → stay up until SIGINT/SIGTERM →
-//	    Manager.Stop (reverse stop + graceful exit)
+//	[3]+  run the config through the App — the application-shaped path:
+//	    App.Start (NewRuntime + Start) → stay up until SIGINT/SIGTERM →
+//	    App.Stop (reverse stop + graceful exit)
 //
 // stage [3]+ replaces the earlier manual NewRuntime/Start/Stop rehearsal: a
 // config that actually serves (e.g. the TCP-listening endpoint.proxy.server)
-// needs to stay up, which is exactly what the Manager is for.
+// needs to stay up, which is exactly what the App is for.
 package main
 
 import (
@@ -68,23 +68,23 @@ func main() {
 	}
 	fmt.Println("stage [2] runtime semantic validation: OK")
 
-	// —— stage [3]+: run through the Manager (application-shaped) ——
-	mgr := new(fe.Manager)
-	if err := mgr.Apply(mc); err != nil {
-		fmt.Fprintf(os.Stderr, "runtime apply failed: %v\n", err)
+	// —— stage [3]+: run through the App (application-shaped) ——
+	app := new(fe.App)
+	if err := app.Start(mc); err != nil {
+		fmt.Fprintf(os.Stderr, "runtime start failed: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Println("stage [3]+ runtime apply: OK (running; Ctrl-C to stop)")
+	fmt.Println("stage [3]+ runtime start: OK (running; Ctrl-C to stop)")
 
-	// Signal handling is the application's job, not the framework's: the
-	// Manager only provides the primitive (Apply/Stop). The demo shows the
-	// wiring: block on SIGINT/SIGTERM, then shut the active Runtime down
+	// Signal handling is the application's job, not the framework's (issue.md
+	// D31): the App only provides the primitive (Start/Stop). The demo shows
+	// the wiring: block on SIGINT/SIGTERM, then shut the active Runtime down
 	// gracefully.
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
 
-	if err := mgr.Stop(); err != nil {
+	if err := app.Stop(); err != nil {
 		fmt.Fprintf(os.Stderr, "runtime stop failed: %v\n", err)
 		os.Exit(1)
 	}
