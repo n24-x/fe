@@ -7,7 +7,8 @@
 //
 // Implemented stages:
 //
-//	[1] read machine config + syntax validation (feconfig.MachineConfigValidate)
+//	[1] parse the machine config (feconfig.ParseHelper, strict) + config
+//	    semantic validation (feconfig.MachineConfigValidate)
 //	[2] runtime-level semantic validation (fe.ValidateRuntimeConfig)
 //	[3]+  run the config through the Manager — the application-shaped path:
 //	    Manager.Apply (NewRuntime + Start) → stay up until SIGINT/SIGTERM →
@@ -19,7 +20,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -49,20 +49,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// —— stage [1]: syntax validation ——
-	if err := feconfig.MachineConfigValidate(raw); err != nil {
-		fmt.Fprintf(os.Stderr, "syntax validation failed: %v\n", err)
+	// —— stage [1]: parse (strict) + config semantic validation ——
+	mc, err := feconfig.ParseHelper(raw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "parsing machine config: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Println("stage [1] syntax validation: OK")
+	if err := feconfig.MachineConfigValidate(mc); err != nil {
+		fmt.Fprintf(os.Stderr, "machine config validation failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("stage [1] machine config parse + validation: OK")
 
 	// —— stage [2]: runtime-level semantic validation ——
-	var mc feconfig.MachineConfig
-	if err := json.Unmarshal(raw, &mc); err != nil {
-		fmt.Fprintf(os.Stderr, "decode machine config: %v\n", err)
-		os.Exit(1)
-	}
-	if err := fe.ValidateRuntimeConfig(&mc); err != nil {
+	if err := fe.ValidateRuntimeConfig(mc); err != nil {
 		fmt.Fprintf(os.Stderr, "runtime semantic validation failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -70,7 +70,7 @@ func main() {
 
 	// —— stage [3]+: run through the Manager (application-shaped) ——
 	mgr := new(fe.Manager)
-	if err := mgr.Apply(&mc); err != nil {
+	if err := mgr.Apply(mc); err != nil {
 		fmt.Fprintf(os.Stderr, "runtime apply failed: %v\n", err)
 		os.Exit(1)
 	}

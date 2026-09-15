@@ -7,6 +7,7 @@ import (
 	"uuid"
 
 	dag "github.com/n24-x/dag-go"
+	"github.com/n24-x/fe/eventbus"
 	"github.com/n24-x/fe/feconfig"
 )
 
@@ -53,7 +54,7 @@ type Runtime struct {
 	// the info container (issue.md #6).
 	cancel context.CancelFunc
 
-	Bus EventBus
+	bus *eventbus.Bus
 
 	// cfg is the machine config this Runtime was built from (read-only).
 	cfg *feconfig.MachineConfig

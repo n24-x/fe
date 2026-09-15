@@ -24,12 +24,12 @@ type Bus struct {
 	closed atomic.Bool
 
 	counters busCounters
-	logf     func(format string, args ...any)
 }
 
+// BusOptions configures a Bus.
 type BusOptions struct {
-	Logf           func(format string, args ...any)
-	RouterCapacity int
+	// RouterCapacity is the capacity of the router's event input channel.
+	RouterCapacity int `json:"router_capacity"`
 }
 
 type busCounters struct {
@@ -45,15 +45,10 @@ func NewWithOptions(opts BusOptions) *Bus {
 	if capacity <= 0 {
 		capacity = DefaultRouterCapacity
 	}
-	logf := opts.Logf
-	if logf == nil {
-		logf = func(format string, args ...any) {}
-	}
 
 	b := &Bus{
 		topics:  map[reflect.Type][]*subscriberDelivery{},
 		workers: map[uint64]*clientWorker{},
-		logf:    logf,
 	}
 
 	b.router = &router{
@@ -80,7 +75,7 @@ func (b *Bus) NewClient(name string) (*Client, error) {
 		subs:       map[reflect.Type]*subscriberCore{},
 		pubs:       map[reflect.Type]*publisherCore{},
 		done:       make(chan struct{}),
-		workerWake: make(chan struct{}, 1), // TODO: 为什么是 1
+		workerWake: make(chan struct{}, 1),
 	}
 	b.clients = append(b.clients, c)
 	return c, nil

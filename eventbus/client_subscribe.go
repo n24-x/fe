@@ -26,13 +26,10 @@ func (c *Client) SubscribeFunc[T any](fn func(T), opts SubscribeOptions) (*Subsc
 	eventType := reflect.TypeFor[T]()
 
 	core := newSubscriberCore(c, eventType, opts)
-	logf := c.bus.logf
 	core.delivery.deliverFunc = func(ev publishedEvent) {
-		defer func() {
-			if r := recover(); r != nil {
-				logf("eventbus: subscriber callback for %s on client %s panicked: %v", eventType, c.name, r)
-			}
-		}()
+		// TODO(next) A panicking subscriber callback must not take down the worker
+		// goroutine, so the panic is recovered and dropped here.
+		defer func() { _ = recover() }()
 		fn(ev.event.(T))
 	}
 

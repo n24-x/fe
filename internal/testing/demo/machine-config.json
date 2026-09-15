@@ -1,4 +1,9 @@
 {
+    "options": {
+        "bus": {
+            "router_capacity": 8
+        }
+    },
     "instances": [
         {
             "id": "9b2e7d1c-3f4a-4b5c-8d6e-7f8a9b0c1d2e",

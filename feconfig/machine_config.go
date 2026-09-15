@@ -1,24 +1,36 @@
 package feconfig
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"uuid"
 
 	dag "github.com/n24-x/dag-go"
+	"github.com/n24-x/fe/eventbus"
 )
 
-// MachineConfig is the machine-readable configuration consumed by fe: the
-// complete list of Module Instances to create and run. It is typically
-// generated from a human-readable config by an adapter.
+// MachineConfig is the configuration consumed by fe: the list of Module
+// Instances to create and run, plus the framework's own facility options.
 //
-// TODO(next)
-// It deliberately has no global section: config shared by several instances
-// is expressed by those instances depending on a shared instance (see
-// issue.md D29).
+// It is a plain in-process value. It is produced either by an adapter that
+// translates a human-readable config, or by parsing its JSON representation
+// (see [ParseHelper]).
+//
+// On the global section: an earlier revision carried shared instance
+// configuration here and it was removed — modules are third-party and the
+// framework cannot know what they would share; instances that need shared
+// config depend on a shared instance instead. Options below is a different
+// thing: it configures fe's own facilities, and is consumed by the framework
+// rather than by module authors.
 type MachineConfig struct {
+	Options   Options        `json:"options"`
 	Instances []InstanceSpec `json:"instances"`
+}
+
+// Options is framework-facility configuration: settings for the Runtime's own
+// facilities (currently the event bus), consumed by fe itself.
+type Options struct {
+	Bus eventbus.BusOptions `json:"bus"`
 }
 
 type InstanceSpec struct {
@@ -28,13 +40,15 @@ type InstanceSpec struct {
 	Deps       []string        `json:"deps"`
 }
 
-func MachineConfigValidate(raw json.RawMessage) error {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-
-	var mc MachineConfig
-	if err := dec.Decode(&mc); err != nil {
-		return fmt.Errorf("%w: %v", ErrMalformedConfig, err)
+// MachineConfigValidate performs semantic validation of an already-decoded
+// config: every mod_id is non-empty, every id is a v4 uuid, ids are unique,
+// deps reference declared instances, and the dependency graph is acyclic.
+//
+// It is a pure check on a value — it never decodes anything (parsing is
+// [ParseHelper]'s job) and has no side effects.
+func MachineConfigValidate(mc *MachineConfig) error {
+	if mc == nil {
+		return fmt.Errorf("%w: nil machine config", ErrMalformedConfig)
 	}
 
 	ids := make(map[string]struct{}, len(mc.Instances))
