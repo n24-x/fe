@@ -1,7 +1,9 @@
 package fe
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/n24-x/fe/feconfig"
@@ -48,6 +50,28 @@ func GetModule(id ModuleID) (Module, error) {
 		return nil, fmt.Errorf("%w: %s", ErrModuleNotRegistered, id)
 	}
 	return m, nil
+}
+
+// Modules returns the descriptor of every registered module, sorted by ID.
+//
+// The registry is a map, so the sort is what makes the result useful: a
+// caller that displays it — CLI help, or an adapter suggesting a module name
+// for a misspelled mod_id — would otherwise print a different order on every
+// run.
+//
+// It returns a fresh snapshot on each call; mutating the slice does not touch
+// the registry.
+func Modules() []ModuleInfo {
+	modulesMu.RLock()
+	mods := make([]ModuleInfo, 0, len(modules))
+	for _, m := range modules {
+		mods = append(mods, m.FeModule())
+	}
+	modulesMu.RUnlock()
+
+	// Sorted outside the lock: the snapshot is ours now.
+	slices.SortFunc(mods, func(a, b ModuleInfo) int { return cmp.Compare(a.ID, b.ID) })
+	return mods
 }
 
 // RegisterModule registers a module. It should be called during init.

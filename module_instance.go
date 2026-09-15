@@ -21,6 +21,14 @@ func (id InstanceID) String() string { return uuid.UUID(id).String() }
 // runtime (identity, dependency references, the lifecycle signal) is captured
 // into its fields during Provision.
 //
+// Neither method has a timeout: Start and Stop may block for as long as the
+// module needs, and the framework neither bounds them nor watches them
+// (issue.md D37). Controlling duration is the module's own job — through a
+// goroutine it starts and its Stop reaps, a deadline on the waits it
+// controls, or whatever fits. The framework's answer to an instance that
+// never returns is the application's: a second interrupt, not a deadline
+// (issue.md D31).
+//
 // TODO(next):
 // The framework drives the lifecycle (issue.md D21): Runtime.Start runs
 // instances in creation order (deps first), Runtime.Stop in reverse.

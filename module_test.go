@@ -88,6 +88,56 @@ func TestGetModuleNotRegistered(t *testing.T) {
 	}
 }
 
+// TestModules verifies the listing covers what was registered, is sorted, and
+// is a snapshot rather than a window onto the registry.
+//
+// The registry is process-global and other tests register into it, so this
+// asserts properties (present, ordered, unique, detached) instead of an exact
+// contents.
+func TestModules(t *testing.T) {
+	// registered out of order on purpose: the result must not depend on it
+	ids := []ModuleID{"fe.test.modules.c", "fe.test.modules.a", "fe.test.modules.b"}
+	for _, id := range ids {
+		RegisterModule(mod(id))
+	}
+
+	got := Modules()
+
+	seen := make(map[ModuleID]bool, len(got))
+	for _, mi := range got {
+		if mi.ID == "" {
+			t.Fatal("Modules() returned a descriptor with an empty ID")
+		}
+		if seen[mi.ID] {
+			t.Fatalf("Modules() returned %q twice", mi.ID)
+		}
+		seen[mi.ID] = true
+	}
+	for _, id := range ids {
+		if !seen[id] {
+			t.Errorf("Modules() is missing the registered module %q", id)
+		}
+	}
+
+	// Sorted ascending: the registry is a map, so this is the guarantee that
+	// display order is stable across runs.
+	for i := 1; i < len(got); i++ {
+		if got[i-1].ID >= got[i].ID {
+			t.Fatalf("Modules() is not sorted: %q comes before %q", got[i-1].ID, got[i].ID)
+		}
+	}
+
+	// A fresh snapshot: overwriting the returned slice must not corrupt the
+	// registry for the next caller.
+	want := len(got)
+	for i := range got {
+		got[i] = ModuleInfo{}
+	}
+	if again := Modules(); len(again) != want || again[0].ID == "" {
+		t.Fatalf("Modules() returned a slice backed by the registry: second call = %v", again)
+	}
+}
+
 func TestRegisterModulePanics(t *testing.T) {
 	tests := []struct {
 		name     string
