@@ -3,9 +3,11 @@ package fe
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/n24-x/fe/feconfig"
 )
@@ -433,4 +435,75 @@ func TestRuntimeConcurrentReadAccess(t *testing.T) {
 	}
 	wg.Wait()
 	<-stopDone
+}
+
+// settleGoroutines waits for the goroutine count to drop to at most want and
+// returns the count it settled on. Releasing a Runtime reaps its goroutines
+// synchronously, so this normally returns on the first poll; the loop absorbs
+// unrelated runtime goroutines and keeps a not-yet-reaped one from failing a
+// test.
+func settleGoroutines(want int) int {
+	n := runtime.NumGoroutine()
+	for range 200 {
+		if n <= want {
+			return n
+		}
+		time.Sleep(5 * time.Millisecond)
+		runtime.GC()
+		n = runtime.NumGoroutine()
+	}
+	return n
+}
+
+// TestRuntimeBusReleasedOnStop verifies Stop releases the Runtime's Bus.
+// Building a Bus starts a router goroutine, and NewRuntime builds one for
+// every Runtime, so a missing release shows up as a leak: without it every
+// cycle below strands one goroutine for the rest of the process.
+func TestRuntimeBusReleasedOnStop(t *testing.T) {
+	const modID = ModuleID("fe.test.lifecycle.busstop")
+	RegisterModule(provMod(modID, nil))
+
+	mc := &feconfig.MachineConfig{
+		Instances: []feconfig.InstanceSpec{{InstanceID: testChainLeafID, ModuleID: string(modID)}},
+	}
+
+	baseline := runtime.NumGoroutine()
+	const cycles = 20
+	for range cycles {
+		rt, err := NewRuntime(mc)
+		if err != nil {
+			t.Fatalf("NewRuntime: %v", err)
+		}
+		if err := rt.Stop(); err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+	}
+	if n := settleGoroutines(baseline); n > baseline {
+		t.Fatalf("goroutines after %d NewRuntime+Stop cycles = %d, want <= %d: the Bus was not released", cycles, n, baseline)
+	}
+}
+
+// TestRuntimeBusReleasedOnConstructionFailure verifies NewRuntime releases the
+// Bus it already built when provisioning fails: the caller gets no Runtime, so
+// nothing else could release it.
+func TestRuntimeBusReleasedOnConstructionFailure(t *testing.T) {
+	const modID = ModuleID("fe.test.lifecycle.busfail")
+	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error) {
+		return nil, errors.New("module rejects the config")
+	}))
+
+	mc := &feconfig.MachineConfig{
+		Instances: []feconfig.InstanceSpec{{InstanceID: testChainLeafID, ModuleID: string(modID)}},
+	}
+
+	baseline := runtime.NumGoroutine()
+	const attempts = 20
+	for range attempts {
+		if _, err := NewRuntime(mc); err == nil {
+			t.Fatal("NewRuntime: expected an error from Provision")
+		}
+	}
+	if n := settleGoroutines(baseline); n > baseline {
+		t.Fatalf("goroutines after %d failed NewRuntime = %d, want <= %d: the Bus was not released", attempts, n, baseline)
+	}
 }
