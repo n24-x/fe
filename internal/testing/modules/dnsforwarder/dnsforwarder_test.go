@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/n24-x/fe"
+	"github.com/n24-x/fe/eventbus"
 	"github.com/n24-x/fe/feconfig"
 	"github.com/n24-x/fe/internal/testing/modules/dns"
 )
@@ -21,6 +22,12 @@ type fakeRT struct {
 
 func (f fakeRT) Instance(id string) (fe.Instance, error) { return f.inst, f.err }
 func (f fakeRT) Context() context.Context                { return context.Background() }
+
+// BusClient completes the interface; dnsforwarder does not use the event bus,
+// so a call would be a bug in the module under test.
+func (f fakeRT) BusClient(name string) (*eventbus.Client, error) {
+	return nil, errors.New("fakeRT: dnsforwarder must not use the event bus")
+}
 
 // stubDep is an Instance that is NOT *dns.Instance, for the wrong-type case.
 type stubDep struct{}
@@ -125,5 +132,33 @@ func TestProvision(t *testing.T) {
 				t.Errorf("DNS() = %p, want %p (the resolved dns instance)", fwd.DNS(), tt.wantDNS)
 			}
 		})
+	}
+}
+
+// TestInstanceStartStop verifies the lifecycle contract: Start and Stop report
+// no error. Start reads the dependency Provision resolved, so this also pins
+// the wiring: a forwarder whose dns instance was not captured would panic in
+// Start rather than pass.
+func TestInstanceStartStop(t *testing.T) {
+	const dnsInstID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
+
+	spec := feconfig.InstanceSpec{
+		ModuleID: "dns.forwarder",
+		Config:   json.RawMessage(`{"dns_inst": "` + dnsInstID + `", "upstream": "8.8.8.8"}`),
+	}
+	inst, err := (Module{}).Provision(spec, fakeRT{inst: new(dns.Instance)})
+	if err != nil {
+		t.Fatalf("Provision: unexpected error: %v", err)
+	}
+	fwd, ok := inst.(*Instance)
+	if !ok {
+		t.Fatalf("Provision returned %T, want *Instance", inst)
+	}
+
+	if err := fwd.Start(); err != nil {
+		t.Fatalf("Start: unexpected error: %v", err)
+	}
+	if err := fwd.Stop(); err != nil {
+		t.Fatalf("Stop: unexpected error: %v", err)
 	}
 }

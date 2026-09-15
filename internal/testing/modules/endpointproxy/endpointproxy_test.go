@@ -1,13 +1,17 @@
 package endpointproxy
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/n24-x/fe"
+	"github.com/n24-x/fe/eventbus"
 	"github.com/n24-x/fe/feconfig"
 	"github.com/n24-x/fe/internal/testing/modules/dns"
 	"github.com/n24-x/fe/internal/testing/modules/dnsforwarder"
@@ -22,6 +26,12 @@ type fakeRT struct {
 
 func (f fakeRT) Instance(id string) (fe.Instance, error) { return f.inst, f.err }
 func (f fakeRT) Context() context.Context                { return context.Background() }
+
+// BusClient completes the interface; endpointproxy does not use the event bus,
+// so a call would be a bug in the module under test.
+func (f fakeRT) BusClient(name string) (*eventbus.Client, error) {
+	return nil, errors.New("fakeRT: endpointproxy must not use the event bus")
+}
 
 // newFwd returns a real *dnsforwarder.Instance to serve as the resolved
 // dependency: it is produced via the module's own Provision with a fake rt
@@ -130,5 +140,119 @@ func TestProvision(t *testing.T) {
 				t.Errorf("DNS() = %p, want %p (the resolved dns.forwarder instance)", proxy.DNS(), tt.wantDNS)
 			}
 		})
+	}
+}
+
+// testFwdID is the dns.forwarder instance id the proxy configs below refer to
+// through domain_resolver.
+const testFwdID = "7b1d2a5e-9f4c-4a8b-8c3d-2e5f1a6b7c8d"
+
+// provisionProxy builds a server the way NewRuntime would: through the
+// module's Provision, with the dns.forwarder dependency resolved by fakeRT.
+func provisionProxy(t *testing.T, host string, port int) *Instance {
+	t.Helper()
+	spec := feconfig.InstanceSpec{
+		ModuleID: "endpoint.proxy.server",
+		Config: json.RawMessage(`{"listen": "` + host + `", "port": ` + strconv.Itoa(port) +
+			`, "domain_resolver": "` + testFwdID + `"}`),
+	}
+	inst, err := (Module{}).Provision(spec, fakeRT{inst: newFwd(t)})
+	if err != nil {
+		t.Fatalf("provisioning endpoint.proxy.server: %v", err)
+	}
+	return inst.(*Instance)
+}
+
+// freePort returns a TCP port that was free when it was probed: the probe
+// listener is closed again before returning, so the instance can take it (the
+// small race in between is one a test can live with).
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probing a free port: %v", err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// TestInstanceStartStop covers the listener lifecycle, the one part of this
+// module that owns a real resource: Start binds the configured address and
+// serves (echoing every line), Stop closes the listener and frees the port,
+// and Stop is idempotent so the Runtime's teardown can call it unconditionally.
+func TestInstanceStartStop(t *testing.T) {
+	port := freePort(t)
+	inst := provisionProxy(t, "127.0.0.1", port)
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+
+	if err := inst.Start(); err != nil {
+		t.Fatalf("Start: unexpected error: %v", err)
+	}
+
+	// The accept loop must serve: every line written comes back.
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dialing the started instance at %s: %v", addr, err)
+	}
+	if _, err := conn.Write([]byte("hello\n")); err != nil {
+		t.Fatalf("writing to the instance: %v", err)
+	}
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		t.Fatalf("reading the echo: %v", err)
+	}
+	if line != "hello\n" {
+		t.Fatalf("echo = %q, want %q", line, "hello\n")
+	}
+	conn.Close()
+
+	if err := inst.Stop(); err != nil {
+		t.Fatalf("Stop: unexpected error: %v", err)
+	}
+	if err := inst.Stop(); err != nil {
+		t.Fatalf("second Stop: unexpected error: %v (Stop must be idempotent)", err)
+	}
+
+	// The port is available again, i.e. the listener was really closed.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("re-binding %s after Stop: %v", addr, err)
+	}
+	ln.Close()
+}
+
+// TestInstanceStopBeforeStart verifies Stop is safe on an instance that never
+// started — Stop before Start, or a rolled-back Start — where the listener is
+// still nil.
+func TestInstanceStopBeforeStart(t *testing.T) {
+	inst := provisionProxy(t, "127.0.0.1", freePort(t))
+
+	if err := inst.Stop(); err != nil {
+		t.Fatalf("Stop before Start: unexpected error: %v", err)
+	}
+}
+
+// TestInstanceStartBindFailure verifies Start surfaces a bind failure instead
+// of leaving a half-started instance behind (the Runtime rolls the whole
+// config back on it), and that the failed instance is still safe to Stop.
+func TestInstanceStartBindFailure(t *testing.T) {
+	blocker, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("binding a blocker listener: %v", err)
+	}
+	defer blocker.Close()
+
+	port := blocker.Addr().(*net.TCPAddr).Port
+	inst := provisionProxy(t, "127.0.0.1", port)
+
+	err = inst.Start()
+	if err == nil {
+		t.Fatal("Start: expected a bind error, got nil")
+	}
+	if !strings.Contains(err.Error(), "listen on") {
+		t.Fatalf("Start error = %v, want it to mention the address it could not bind", err)
+	}
+	if err := inst.Stop(); err != nil {
+		t.Fatalf("Stop after a failed Start: unexpected error: %v", err)
 	}
 }
