@@ -83,7 +83,12 @@ type Runtime struct {
 // RuntimeAccess is the module-visible view of the Runtime handed to a
 // Provision call: resolve a dependency instance, read the lifecycle context,
 // open a Bus client. It deliberately hides the rest of the Runtime
-// (lifecycle, registry, …). *Runtime satisfies it; tests may fake it.
+// (lifecycle, registry, …) and sits next to [Runtime], its only real
+// implementation.
+//
+// Modules never receive a *Runtime: the framework hands out the sealed
+// [moduleView] instead, so the hidden part stays hidden even against a type
+// assertion. Tests may fake the interface.
 type RuntimeAccess interface {
 	// Instance resolves a dependency instance by its config id.
 	Instance(id string) (inst Instance, err error)
@@ -93,6 +98,24 @@ type RuntimeAccess interface {
 	// for a human reading debug logs and client-scoped errors; it is NOT
 	// required to be unique — the framework does not route by it.
 	BusClient(name string) (client *eventbus.Client, err error)
+}
+
+// moduleView is the sealed [RuntimeAccess] the framework hands to modules: it
+// forwards exactly the interface's three methods and adds nothing.
+//
+// Handing over *Runtime would satisfy the interface without sealing it. An
+// interface value carries its dynamic type, so a module — which lives in a
+// package of its own — could recover the concrete Runtime with a plain type
+// assertion and call [Runtime.Start] / [Runtime.Stop], driving the lifecycle
+// the framework owns (D30). moduleView's method set is exactly the
+// interface's, and its name is unexported, so such an assertion finds nothing.
+type moduleView struct{ r *Runtime }
+
+func (v moduleView) Instance(id string) (Instance, error) { return v.r.Instance(id) }
+func (v moduleView) Context() context.Context             { return v.r.Context() }
+
+func (v moduleView) BusClient(name string) (*eventbus.Client, error) {
+	return v.r.BusClient(name)
 }
 
 // lifecycle is the Runtime's lifecycle state machine (issue.md D4/D21):
@@ -255,12 +278,15 @@ func instanceOrder(mc *feconfig.MachineConfig) ([]*feconfig.InstanceSpec, error)
 // (the framework does not decode spec.Config — see issue.md func.md).
 // GetModule returning a module that ValidateRuntimeConfig accepted as a
 // Provisioner guarantees the type assertion below succeeds.
+//
+// The module receives a [moduleView], never the Runtime itself: see that type
+// for why the distinction matters.
 func (r *Runtime) provision(spec feconfig.InstanceSpec) (Instance, error) {
 	m, err := GetModule(ModuleID(spec.ModuleID))
 	if err != nil {
 		return nil, err
 	}
-	return m.(Provisioner).Provision(spec, r)
+	return m.(Provisioner).Provision(spec, moduleView{r: r})
 }
 
 // Start starts the Runtime: it transitions into the Running state (flow
@@ -414,5 +440,7 @@ func (r *Runtime) BusClient(name string) (client *eventbus.Client, err error) {
 	return r.bus.NewClient(name)
 }
 
-// Runtime satisfies RuntimeAccess: it can be passed to Provision directly.
-var _ RuntimeAccess = (*Runtime)(nil)
+// moduleView is what Provision receives; *Runtime is deliberately not handed
+// out (see that type). The delegation above keeps the two in step: renaming a
+// Runtime method breaks this assertion.
+var _ RuntimeAccess = moduleView{}
