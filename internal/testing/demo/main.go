@@ -21,6 +21,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -69,7 +70,11 @@ func main() {
 	fmt.Println("stage [2] runtime semantic validation: OK")
 
 	// —— stage [3]+: run through the App (application-shaped) ——
-	app := new(fe.App)
+	app, err := fe.New(fe.Options{Name: "demo", SlogHandler: slog.NewTextHandler(os.Stderr, nil)})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "new app: %v\n", err)
+		os.Exit(1)
+	}
 	if err := app.Start(mc); err != nil {
 		fmt.Fprintf(os.Stderr, "runtime start failed: %v\n", err)
 		os.Exit(1)

@@ -3,6 +3,7 @@ package fe
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"uuid"
 
 	dag "github.com/n24-x/dag-go"
@@ -55,6 +56,17 @@ type Runtime struct {
 	// Instances never touch it directly — they get a client of their own from
 	// [Runtime.BusClient].
 	bus *eventbus.Bus
+
+	// log records this Runtime's lifecycle. It is snapshotted from
+	// mc.Options.Logger at construction (nil becomes a discarding logger), so
+	// cfg stays read-only and nothing injected later can change what an
+	// existing Runtime writes through. It already carries the App's
+	// attribution, having been derived from the App's logger.
+	//
+	// Only the Runtime's own transitions are recorded: instance lifecycle is
+	// the module's business, not the framework's. A failing instance is still
+	// identifiable — its id is in the error Start returns.
+	log *slog.Logger
 
 	// cfg is the machine config this Runtime was built from (read-only).
 	cfg *feconfig.MachineConfig
@@ -185,6 +197,7 @@ func NewRuntime(mc *feconfig.MachineConfig) (*Runtime, error) {
 		done:      make(chan struct{}),
 		cfg:       mc,
 		bus:       eventbus.NewWithOptions(mc.Options.Bus),
+		log:       orDiscard(mc.Options.Logger),
 		instances: make(map[InstanceID]Instance, len(order)),
 		mods:      make(map[ModuleID]bool, len(order)),
 		lifecycle: lifecycle{startOrder: make([]InstanceID, 0, len(order))},
@@ -213,6 +226,7 @@ func NewRuntime(mc *feconfig.MachineConfig) (*Runtime, error) {
 		r.lifecycle.startOrder = append(r.lifecycle.startOrder, instID)
 	}
 
+	r.log.Info("runtime created", "instances", len(r.instances))
 	return r, nil
 }
 
@@ -308,6 +322,7 @@ func (r *Runtime) Start() error {
 
 	// Rollback buffer: instances started so far, stopped in reverse on error.
 	started := make([]InstanceID, 0, len(r.lifecycle.startOrder))
+	r.log.Info("runtime starting")
 	for _, id := range r.lifecycle.startOrder {
 		if err := r.instances[id].Start(); err != nil {
 			var rollbackErr error
@@ -318,19 +333,24 @@ func (r *Runtime) Start() error {
 						fmt.Errorf("fe: start: rollback stop of instance %s: %w", stopID, err2))
 				}
 			}
+			startErr := fmt.Errorf("fe: start: instance %s: %w", id, err)
+			if rollbackErr != nil {
+				startErr = errors.Join(startErr, rollbackErr)
+			}
 			// Rollback done: the Runtime is defunct (D3), so release the
 			// signal and the Bus; Start refuses to run again.
 			r.lifecycle.stopped = true
 			r.cleanup()
-			if rollbackErr != nil {
-				return errors.Join(fmt.Errorf("fe: start: instance %s: %w", id, err), rollbackErr)
-			}
-			return fmt.Errorf("fe: start: instance %s: %w", id, err)
+			// Recording the transition is the Runtime's business; reporting the
+			// error is the caller's (App logs it too, with more context).
+			r.log.Error("runtime start failed, rolled back", "err", startErr)
+			return startErr
 		}
 		started = append(started, id)
 	}
 
 	r.lifecycle.started = true
+	r.log.Info("runtime started")
 	return nil
 }
 
@@ -360,6 +380,7 @@ func (r *Runtime) Stop() error {
 		return nil
 	}
 
+	r.log.Info("runtime stopping")
 	var err error
 	if r.lifecycle.started {
 		for i := len(r.lifecycle.startOrder) - 1; i >= 0; i-- {
@@ -372,6 +393,7 @@ func (r *Runtime) Stop() error {
 	}
 	r.lifecycle.stopped = true
 	r.cleanup()
+	r.log.Info("runtime stopped")
 	return err
 }
 

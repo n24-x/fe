@@ -1,6 +1,7 @@
 package fe
 
 import (
+	"log/slog"
 	"sync"
 
 	"github.com/n24-x/fe/feconfig"
@@ -43,6 +44,55 @@ type App struct {
 	// single-use: a Start already in flight when it happens must not install
 	// the Runtime it just built (see Start).
 	stopped bool
+
+	// name labels this App in its own records, as the "app" attribute. It is
+	// optional; see [New].
+	name string
+
+	// logger records this App's and its Runtime's lifecycle. It comes from the
+	// handler the application supplied to [New]; when there is none it
+	// discards, so a zero-value App is usable and a library stays silent. See
+	// logging.go for the seam.
+	logger *slog.Logger
+}
+
+// Options configures an [App] in [New].
+type Options struct {
+	// Name labels the App in its own log records (the "app" attribute). It is
+	// optional and is NOT validated: an unnamed App is a normal App, it simply
+	// carries no app attribute.
+	Name string
+
+	// SlogHandler receives every record the framework writes about this App,
+	// its Runtimes and (through the Runtime) its instances. fe supplies no
+	// default: nil discards. See logging.go for what to pass and why fe asks
+	// for a handler rather than a logger.
+	SlogHandler slog.Handler
+}
+
+// New returns an App that reports its lifecycle to opts.SlogHandler.
+//
+// Neither option is required and the App never fails to build, so the error is
+// always nil today; it is in the signature so a future check (a reserved name,
+// say) does not break callers.
+//
+// New is a convenience, not the only way: the zero value
+// (<code>new(App)</code>) is a working App that discards everything, which is
+// what tests and throwaway programs want.
+func New(opts Options) (*App, error) {
+	logger := loggerFrom(opts.SlogHandler)
+	if opts.Name != "" {
+		// Attach the name at the source so every derived logger — the Runtime's
+		// and every logger below it — carries it without repeating the call.
+		logger = logger.With("app", opts.Name)
+	}
+	return &App{name: opts.Name, logger: logger}, nil
+}
+
+// base returns the logger to derive this App's own records from. It exists so
+// the zero-value App is safe: a nil logger discards rather than panicking.
+func (a *App) base() *slog.Logger {
+	return orDiscard(a.logger)
 }
 
 // Start makes mc the active config: it builds and starts a new Runtime from
@@ -62,14 +112,27 @@ func (a *App) Start(mc *feconfig.MachineConfig) error {
 	a.startMu.Lock()
 	defer a.startMu.Unlock()
 
+	log := a.base()
+	log.Info("app starting")
+
+	// Hand the Runtime this App's logger through a copy of mc, so the caller's
+	// value is never written to: Runtime.cfg is documented read-only, and two
+	// Apps sharing one *MachineConfig would otherwise overwrite each other's
+	// logger. Options is a value type and Instances is only read, so a shallow
+	// copy is enough.
+	mcCopy := *mc
+	mcCopy.Options.Logger = log
+
 	// Build and start outside mu: this is module code that may block on a
 	// network bind, a slow decode, anything. Holding mu here is what used to
 	// make a concurrent Stop wait for the whole reload.
-	r, err := NewRuntime(mc)
+	r, err := NewRuntime(&mcCopy)
 	if err != nil {
+		log.Error("app start failed", "err", err)
 		return err
 	}
 	if err := r.Start(); err != nil {
+		log.Error("app start failed", "err", err)
 		return err
 	}
 
@@ -80,6 +143,7 @@ func (a *App) Start(mc *feconfig.MachineConfig) error {
 		// current and nothing else will ever stop it. Install nothing, and
 		// release it here rather than leak a running Runtime.
 		_ = r.Stop()
+		log.Info("app start abandoned: stopped while starting")
 		return ErrAppStopped
 	}
 	old := a.current
@@ -87,8 +151,10 @@ func (a *App) Start(mc *feconfig.MachineConfig) error {
 	a.mu.Unlock()
 
 	if old != nil {
+		log.Info("app replacing runtime")
 		old.Stop() // best-effort: the old tree is being replaced regardless
 	}
+	log.Info("app started")
 	return nil
 }
 
@@ -120,5 +186,14 @@ func (a *App) Stop() error {
 	if r == nil {
 		return nil
 	}
-	return r.Stop()
+
+	log := a.base()
+	log.Info("app stopping")
+	err := r.Stop()
+	if err != nil {
+		log.Error("app stop failed", "err", err)
+		return err
+	}
+	log.Info("app stopped")
+	return nil
 }
