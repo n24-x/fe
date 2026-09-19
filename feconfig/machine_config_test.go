@@ -1,7 +1,6 @@
 package feconfig
 
 import (
-	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -21,84 +20,6 @@ func spec(id, mod string, deps ...string) InstanceSpec {
 // mc builds a MachineConfig from instance specs.
 func mc(specs ...InstanceSpec) *MachineConfig {
 	return &MachineConfig{Instances: specs}
-}
-
-// TestParseHelper covers the JSON -> value step, including strict decoding
-// (unknown fields rejected) which is ParseHelper's responsibility alone.
-func TestParseHelper(t *testing.T) {
-	tests := []struct {
-		name    string
-		raw     string
-		wantErr error // errors.Is target; nil means it must parse
-	}{
-		{
-			name: "valid config",
-			raw:  `{"options":{"bus":{"router_capacity":8}},"instances":[{"id":"` + idA + `","mod_id":"dns","config":{},"deps":[]}]}`,
-		},
-		{
-			name: "options omitted",
-			raw:  `{"instances":[]}`,
-		},
-		{
-			name: "empty instances",
-			raw:  `{}`,
-		},
-		{
-			name:    "malformed json",
-			raw:     `{"instances":`,
-			wantErr: ErrMalformedConfig,
-		},
-		{
-			name:    "unknown top-level field",
-			raw:     `{"extra":1,"instances":[]}`,
-			wantErr: ErrMalformedConfig,
-		},
-		{
-			name:    "unknown instance field",
-			raw:     `{"instances":[{"id":"` + idA + `","mod_id":"dns","config":{},"deps":[],"unexpected":true}]}`,
-			wantErr: ErrMalformedConfig,
-		},
-		{
-			name:    "unknown options field",
-			raw:     `{"options":{"bogus":1},"instances":[]}`,
-			wantErr: ErrMalformedConfig,
-		},
-		{
-			name:    "unknown bus option field",
-			raw:     `{"options":{"bus":{"bogus":1}},"instances":[]}`,
-			wantErr: ErrMalformedConfig,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseHelper(json.RawMessage(tt.raw))
-			if tt.wantErr != nil {
-				if !errors.Is(err, tt.wantErr) {
-					t.Fatalf("want errors.Is(err, %v), got err = %v", tt.wantErr, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got == nil {
-				t.Fatal("ParseHelper returned nil config without error")
-			}
-		})
-	}
-}
-
-// TestParseHelperOptions verifies the framework facility options survive the
-// JSON round trip.
-func TestParseHelperOptions(t *testing.T) {
-	mc, err := ParseHelper(json.RawMessage(`{"options":{"bus":{"router_capacity":8}},"instances":[]}`))
-	if err != nil {
-		t.Fatalf("ParseHelper: %v", err)
-	}
-	if got := mc.Options.Bus.RouterCapacity; got != 8 {
-		t.Fatalf("Options.Bus.RouterCapacity = %d, want 8", got)
-	}
 }
 
 // TestMachineConfigValidate covers the semantic checks on an in-process value.

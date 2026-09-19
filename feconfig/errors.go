@@ -3,7 +3,9 @@ package feconfig
 import "errors"
 
 var (
-	// ErrMalformedConfig: JSON failed strict decoding (syntax error / unknown field / type mismatch).
+	// ErrMalformedConfig: the value is not a usable machine config (nil, or a shape that cannot describe instances).
+	// Decoding is not feconfig's job — the framework takes a MachineConfig however the application built it —
+	// so this is never returned for a JSON syntax error.
 	ErrMalformedConfig = errors.New("feconfig: malformed machine config")
 
 	// ErrMissingModuleID: instances[i].mod_id is empty.

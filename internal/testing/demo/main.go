@@ -7,7 +7,7 @@
 //
 // Implemented stages:
 //
-//	[1] parse the machine config (feconfig.ParseHelper, strict) + config
+//	[1] parse the machine config (internal/testing/mcfile, strict) + config
 //	    semantic validation (feconfig.MachineConfigValidate)
 //	[2] runtime-level semantic validation (fe.ValidateRuntimeConfig)
 //	[3]+  run the config through the App — the application-shaped path:
@@ -28,6 +28,7 @@ import (
 
 	"github.com/n24-x/fe"
 	"github.com/n24-x/fe/feconfig"
+	"github.com/n24-x/fe/internal/testing/mcfile"
 
 	// Register test modules via import side effect (their init() calls
 	// fe.RegisterModule). Without importing a module's package, its module
@@ -51,7 +52,7 @@ func main() {
 	}
 
 	// —— stage [1]: parse (strict) + config semantic validation ——
-	mc, err := feconfig.ParseHelper(raw)
+	mc, err := mcfile.Parse(raw)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "parsing machine config: %v\n", err)
 		os.Exit(1)
