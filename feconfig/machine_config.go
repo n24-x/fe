@@ -28,23 +28,13 @@ type MachineConfig struct {
 	Instances []InstanceSpec `json:"instances"`
 }
 
-// Options is framework-facility configuration: settings for the Runtime's own
-// facilities, consumed by fe itself rather than by module authors.
-//
-// It holds two kinds of member, which are not interchangeable:
-//
-//   - Bus is a configuration *value*, written by whoever writes the config
-//     (it survives a JSON round trip, and is the only bus knob there is).
-//   - Logger is a runtime *handle* injected by the framework: fe.App.Start
-//     sets it before building the Runtime, so the Runtime can log its own
-//     lifecycle. It carries json:"-" deliberately — it is not config, and a
-//     config file must not be able to supply one. Without that tag the field
-//     name would match on decode (encoding/json is case-insensitive) and
-//     strict decoding would happily accept "Logger":{} as a *slog.Logger
-//     with a nil handler, which panics on first use.
+// Options configures Runtime facilities provided by the framework.
 type Options struct {
-	Bus    eventbus.BusOptions `json:"bus"`
-	Logger *slog.Logger        `json:"-"`
+	Bus eventbus.BusOptions `json:"bus"`
+
+	// Logger is injected by the framework; see [fe.App.Start].
+	// json:"-" keeps it out of config decoding.
+	Logger *slog.Logger `json:"-"`
 }
 
 type InstanceSpec struct {

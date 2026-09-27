@@ -10,13 +10,10 @@ import (
 // App is the framework user's handle on the active Runtime — to a Runtime
 // what a [Module] is to an Instance. Start installs one (hot-replacing the
 // previous), Stop ends it.
-//
-// TODO(next): there is no Reload entry point yet (issue.md D5/D7); a reload is
-// Start with a new config.
 type App struct {
-	// loadMu serializes Runtime loads. [App.Start] and [App.Reload] hold it
-	// so only one Runtime can be built and installed at a time. Stop is deliberately
-	// outside it; see [App.Stop].
+	// loadMu serializes Runtime loads. [App.Start] holds it, so only one Runtime
+	// can be built and installed at a time. [App.Stop] is deliberately
+	// outside it.
 	loadMu sync.Mutex
 
 	// mu guards the fields: current and stopped. Never held across user code.
@@ -27,7 +24,7 @@ type App struct {
 	// Once stopped, it cannot be started again.
 	stopped bool
 
-	// name labels this App. It is optional, see [New].
+	// name labels this App.
 	name string
 
 	// logger records this App's and its Runtime's lifecycle. If none, it discards,
@@ -50,7 +47,7 @@ type Options struct {
 	SlogHandler slog.Handler
 }
 
-// New returns a [App].
+// New returns an [App].
 //
 // The error is always nil today — an App never fails to construct — and is in
 // the signature so a future check (a reserved name, say) does not break
@@ -59,25 +56,20 @@ func New(opts Options) (*App, error) {
 	logger := loggerFrom(opts.SlogHandler)
 	if opts.Name != "" {
 		// Attach the name at the source so every derived logger — the Runtime's
-		// and every logger below it — without writing it again everywhere.
+		// and every logger below it — carries it without repeating the call.
 		logger = logger.With("app", opts.Name)
 	}
 	return &App{name: opts.Name, logger: logger}, nil
 }
 
-// Start makes mc the active config: it builds and starts a new Runtime from
-// mc and, only on success, swaps it in and stops the one it replaced.
+// Start builds and starts a new Runtime from mc. On success, it swaps in the
+// new [Runtime] and stops the old Runtime. If building or starting the new Runtime
+// fails, Start returns the error without changing the current Runtime.
 //
-// It returns ErrAppStopped, having stopped the Runtime it built, if Stop ran
-// while that Runtime was being built — a shutdown must not be outrun by a
-// reload that was already under way.
+// If [App.Stop] runs while the new Runtime is being built, Start stops the
+// Runtime it built and returns [ErrAppStopped].
 //
-// TODO(next):
-// This is the future hot-reload entry point (issue.md D5/D7).
-// Build-then-swap (caddy's model): NewRuntime provisions every instance and
-// Start runs them. If either fails, the new Runtime is discarded — a failed
-// Start has already stopped what it started and closed its lifecycle signal —
-// and the old Runtime keeps running untouched.
+// Start can be used to reload the App with a new config.
 func (a *App) Start(mc *feconfig.MachineConfig) error {
 	a.loadMu.Lock()
 	defer a.loadMu.Unlock()
@@ -85,17 +77,12 @@ func (a *App) Start(mc *feconfig.MachineConfig) error {
 	log := orDiscard(a.logger)
 	log.Info("app starting")
 
-	// Hand the Runtime this App's logger through a copy of mc, so the caller's
-	// value is never written to: Runtime.cfg is documented read-only, and two
-	// Apps sharing one *MachineConfig would otherwise overwrite each other's
-	// logger. Options is a value type and Instances is only read, so a shallow
-	// copy is enough.
+	// Runtime.cfg is read-only, and two Apps sharing one *MachineConfig
+	// would otherwise overwrite some fields.
 	mcCopy := *mc
-	mcCopy.Options.Logger = log
+	mcCopy.Options.Logger = log // inject Logger
 
-	// Build and start outside mu: this is module code that may block on a
-	// network bind, a slow decode, anything. Holding mu here is what used to
-	// make a concurrent Stop wait for the whole reload.
+	// Build outside mu: module code may block, and MUST NOT block [App.Stop].
 	r, err := NewRuntime(&mcCopy)
 	if err != nil {
 		log.Error("app start failed", "err", err)
@@ -109,11 +96,8 @@ func (a *App) Start(mc *feconfig.MachineConfig) error {
 	a.mu.Lock()
 	if a.stopped {
 		a.mu.Unlock()
-		// Stop ran while this Runtime was being built, so it never became
-		// current and nothing else will ever stop it. Install nothing, and
-		// release it here rather than leak a running Runtime.
 		_ = r.Stop()
-		log.Info("app start abandoned: stopped while starting")
+		log.Info("app start/reload abandoned: app stopped")
 		return ErrAppStopped
 	}
 	old := a.current
@@ -122,14 +106,9 @@ func (a *App) Start(mc *feconfig.MachineConfig) error {
 
 	if old != nil {
 		log.Info("app replacing runtime")
-		old.Stop() // best-effort: the old tree is being replaced regardless
+		old.Stop() // best-effort: the old runtime is being replaced regardless
 	}
 	log.Info("app started")
-	return nil
-}
-
-// TODO
-func (a *App) Reload(mc *feconfig.MachineConfig) error {
 	return nil
 }
 
