@@ -38,4 +38,4 @@ Two rules keep the seam safe:
 | `logging.go` | The seam itself: `loggerFrom` (nil → `slog.DiscardHandler`) and `ensureLogger` (a logger handed along by value may legitimately be absent) |
 | `fe.Options.SlogHandler` | The handler the application passes in |
 | `feconfig.Options.Logger` | The framework's channel for handing a derived logger to a Runtime; not config, carries `json:"-"` |
-| `Runtime.log` | Snapshotted at construction; the Runtime never reads cfg again |
+| `Runtime.log` | Snapshotted at construction, so a Runtime's output never changes under it |

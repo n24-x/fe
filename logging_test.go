@@ -215,8 +215,8 @@ func TestAppStartLogsFailure(t *testing.T) {
 }
 
 // TestAppStartLeavesCallerConfigUntouched verifies the logger is injected into
-// a copy: Runtime.cfg is documented read-only, and two Apps sharing one
-// *MachineConfig must not overwrite each other's logger.
+// a copy: App.Start must not write to the MachineConfig its caller owns, and
+// two Apps sharing one must not overwrite each other's logger.
 func TestAppStartLeavesCallerConfigUntouched(t *testing.T) {
 	const modID = ModuleID("fe.test.logging.nomutate")
 	RegisterModule(provMod(modID, nil))

@@ -78,8 +78,8 @@ func (a *App) Start(mc *feconfig.MachineConfig) error {
 	log := ensureLogger(a.logger)
 	log.Info("app starting")
 
-	// Runtime.cfg is read-only, and two Apps sharing one *MachineConfig
-	// would otherwise overwrite some fields.
+	// Work on a copy so the caller's MachineConfig is never written to: two
+	// Apps sharing one would otherwise race on the Logger field set below.
 	mcCopy := *mc
 	mcCopy.Options.Logger = log // inject Logger
 

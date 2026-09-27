@@ -12,25 +12,33 @@ import (
 )
 
 // Runtime is the per-config runtime world of fe: it is built from one
-// MachineConfig, lives only as long as that config is active, and is rebuilt
-// (a brand-new Runtime) whenever a new config replaces it.
+// [feconfig.MachineConfig] and ended by [Runtime.Stop].
 //
 // # Concurrency contract
 //
-// Instances run concurrently once Start completes (their goroutines are
-// alive while Stop runs). Two rules keep that safe without locks:
+// Runtime has two distinct concurrency boundaries: the framework lifecycle
+// and the RuntimeAccess view exposed to instance goroutines.
 //
-//   - Instance goroutines may call [Runtime.Instance], [Runtime.Done] and
-//     [Runtime.BusClient] concurrently: after NewRuntime the instances map is
-//     never written again, so concurrent reads are race-free, and the Bus
-//     guards its own client list. (Instances reach the Runtime only through
-//     the narrow [RuntimeAccess] view, which exposes exactly these three
-//     methods.)
-//   - Start/Stop are NOT safe for concurrent use with each other: they
-//     mutate the one-shot lifecycle state. The framework serializes them by
-//     construction — the App ([App.Start]/[App.Stop], mutex-guarded) or the
-//     application's single main goroutine drives the lifecycle; instance
-//     goroutines never hold a *Runtime and cannot reach Start/Stop.
+// A. RuntimeAccess
+//
+// Instance goroutines may call [Runtime.Instance], [Runtime.Done], and
+// [Runtime.BusClient] concurrently.
+//
+// After NewRuntime, the instances map is never modified, so concurrent reads
+// are race-free. The Bus also protects its own client list.
+//
+// The RuntimeAccess view exposes only these concurrency-safe operations,
+// keeping lifecycle mutation outside instance goroutines.
+//
+// Instance goroutines cannot reach Start or Stop: they receive only the
+// narrow [RuntimeAccess] view.
+//
+// B. Framework lifecycle
+//
+// Start and Stop are not safe for concurrent use with each other. They mutate
+// the one-shot lifecycle state and must be serialized by the framework.
+// The App ([App.Start]/[App.Stop]) or the application's single main goroutine
+// drives the lifecycle.
 type Runtime struct {
 	// done is the Runtime's lifecycle signal: created in NewRuntime, closed by
 	// cleanup. Instance goroutines select on it to learn that the Runtime is
@@ -52,17 +60,14 @@ type Runtime struct {
 
 	// log records this Runtime's lifecycle. It is snapshotted from
 	// mc.Options.Logger at construction (nil becomes a discarding logger), so
-	// cfg stays read-only and nothing injected later can change what an
-	// existing Runtime writes through. It already carries the App's
-	// attribution, having been derived from the App's logger.
+	// nothing injected later can change what an existing Runtime writes
+	// through. It already carries the App's attribution, having been derived
+	// from the App's logger.
 	//
 	// Only the Runtime's own transitions are recorded: instance lifecycle is
 	// the module's business, not the framework's. A failing instance is still
 	// identifiable — its id is in the error Start returns.
 	log *slog.Logger
-
-	// cfg is the machine config this Runtime was built from (read-only).
-	cfg *feconfig.MachineConfig
 
 	// instances are the running instances, keyed by their id.
 	instances map[InstanceID]Instance
@@ -187,7 +192,6 @@ func NewRuntime(mc *feconfig.MachineConfig) (*Runtime, error) {
 
 	r := &Runtime{
 		done:      make(chan struct{}),
-		cfg:       mc,
 		bus:       eventbus.NewWithOptions(mc.Options.Bus),
 		log:       ensureLogger(mc.Options.Logger),
 		instances: make(map[InstanceID]Instance, len(order)),
