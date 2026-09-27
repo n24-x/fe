@@ -10,19 +10,16 @@ import (
 	"github.com/n24-x/fe/eventbus"
 )
 
-// MachineConfig is the configuration consumed by fe: the list of Module
+// MachineConfig is the configuration the framework consumes: the Module
 // Instances to create and run, plus the framework's own facility options.
 //
-// It is a plain in-process value. It is produced either by an adapter that
-// translates a human-readable config, or by parsing its JSON representation
-// (see [ParseHelper]).
+// It is a plain in-process value, and this type is the contract: the field
+// names and json tags below are the shape the framework reads. Decoding is not
+// feconfig's job — how a config is written, generated, or parsed is the
+// application's business, and the framework exports no parser.
 //
-// On the global section: an earlier revision carried shared instance
-// configuration here and it was removed — modules are third-party and the
-// framework cannot know what they would share; instances that need shared
-// config depend on a shared instance instead. Options below is a different
-// thing: it configures fe's own facilities, and is consumed by the framework
-// rather than by module authors.
+// MachineConfigValidate checks the structure of a decoded value; the framework
+// adds its own checks when it builds a Runtime.
 type MachineConfig struct {
 	Options   Options        `json:"options"`
 	Instances []InstanceSpec `json:"instances"`
@@ -37,19 +34,31 @@ type Options struct {
 	Logger *slog.Logger `json:"-"`
 }
 
+// InstanceSpec describes one Module Instance to create and run.
 type InstanceSpec struct {
-	InstanceID string          `json:"id"`
-	ModuleID   string          `json:"mod_id"`
-	Config     json.RawMessage `json:"config"`
-	Deps       []string        `json:"deps"`
+	// InstanceID is this instance's identity: a v4 uuid, unique in the config.
+	// Modules reference other instances by it (see Deps).
+	InstanceID string `json:"id"`
+
+	// ModuleID names the registered module that produces the instance.
+	ModuleID string `json:"mod_id"`
+
+	// Config is the module's own configuration; the framework does not decode
+	// it, it hands it to the module untouched.
+	Config json.RawMessage `json:"config"`
+
+	// Deps are the ids of the other instances in this config that this one
+	// depends on. The framework derives the order from them, and provisions,
+	// starts and stops in that order.
+	Deps []string `json:"deps"`
 }
 
 // MachineConfigValidate performs semantic validation of an already-decoded
 // config: every mod_id is non-empty, every id is a v4 uuid, ids are unique,
 // deps reference declared instances, and the dependency graph is acyclic.
 //
-// It is a pure check on a value — it never decodes anything (parsing is
-// [ParseHelper]'s job) and has no side effects.
+// It is a pure check on a value: it never decodes anything and has no side
+// effects.
 func MachineConfigValidate(mc *MachineConfig) error {
 	if mc == nil {
 		return fmt.Errorf("%w: nil machine config", ErrMalformedConfig)
