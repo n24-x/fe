@@ -551,9 +551,9 @@ func TestContainsElement(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ok, found := containsElement(tt.list, tt.element)
-			if ok != tt.wantOK || found != tt.wantFound {
-				t.Fatalf("containsElement = %v, %v; want %v, %v", ok, found, tt.wantOK, tt.wantFound)
+			applicable, found := containsElement(tt.list, tt.element)
+			if applicable != tt.wantOK || found != tt.wantFound {
+				t.Fatalf("containsElement = %v, %v; want %v, %v", applicable, found, tt.wantOK, tt.wantFound)
 			}
 		})
 	}

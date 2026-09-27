@@ -1,16 +1,13 @@
-// Package runtimex 收纳 runtime 标准库缺失的少量辅助函数。
 package runtimex
 
 import "runtime"
 
-// GoroutineID 返回当前 goroutine 的 ID。
+// GoroutineID returns the current goroutine ID.
 //
-// Go 标准库不公开该 API，故此处通过 runtime.Stack 解析其输出首行
-// （形如 "goroutine 123 [running]:\n..."）取得。runtime.Stack 需做一次栈快照，
-// 实测成本约数百 ns，**不得用于热路径**。
+// The Go stdlib does not expose this API, so parse the first line of runtime.Stack
+// output ("goroutine 123 [running]: ...").
 //
-// 典型用途：识别"当前代码是否正跑在某个自建事件循环的 goroutine 上"，
-// 以便该循环内的重入操作（重入发布 / 关闭自身）不阻塞自己造成自等死锁。
+// It takes a stack snapshot and costs a few hundred ns; do not use it on hot paths.
 func GoroutineID() uint64 {
 	var buf [64]byte
 	n := runtime.Stack(buf[:], false)

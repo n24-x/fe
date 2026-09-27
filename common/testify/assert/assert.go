@@ -18,9 +18,6 @@ import (
 // *calling* function as skippable, so a failure reports the first frame that
 // did not ask to be skipped. Every assertion calls it too, otherwise the
 // reported line would be the assertion's own line in this file.
-//
-// Fail and FailNow are not exported yet. They are the escape hatch for writing
-// your own assertions, and they belong to a later tier (wiki/testify_api.md).
 func fail(t TestingT, failureMessage string, msgAndArgs ...any) bool {
 	if h, ok := t.(tHelper); ok {
 		h.Helper()
@@ -99,8 +96,11 @@ func labeledOutput(content ...labeledContent) string {
 
 	var sb strings.Builder
 	for _, c := range content {
-		sb.WriteString("\t" + c.label + ":" +
-			strings.Repeat(" ", longest-len(c.label)) + "\t")
+		sb.WriteString("\t")
+		sb.WriteString(c.label)
+		sb.WriteString(":")
+		sb.WriteString(strings.Repeat(" ", longest-len(c.label)))
+		sb.WriteString("\t")
 		sb.WriteString(indentLines(c.content, longest))
 		sb.WriteByte('\n')
 	}
@@ -119,7 +119,8 @@ func indentLines(content string, longestLabel int) string {
 	sb.WriteString(lines[0])
 	pad := "\n\t" + strings.Repeat(" ", longestLabel+1) + "\t"
 	for _, line := range lines[1:] {
-		sb.WriteString(pad + line)
+		sb.WriteString(pad)
+		sb.WriteString(line)
 	}
 	return sb.String()
 }

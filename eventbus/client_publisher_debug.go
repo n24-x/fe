@@ -2,7 +2,7 @@ package eventbus
 
 import "reflect"
 
-// publishTypes 返回本客户端当前登记的全部发布类型（统计/调试用，Debugger 接入）。
+// publishTypes returns all publish types currently registered by this client.
 func (c *Client) publishTypes() []reflect.Type {
 	c.mu.Lock()
 	defer c.mu.Unlock()

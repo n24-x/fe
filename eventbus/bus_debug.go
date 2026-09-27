@@ -2,13 +2,13 @@ package eventbus
 
 import "reflect"
 
-// BusStats 是总线累计统计的快照。
+// BusStats is a snapshot of cumulative bus statistics.
 type BusStats struct {
-	PublishedTotal uint64 // 累计发布事件数
-	RoutedTotal    uint64 // 累计递交份数（router.submit 成功一次计 1；非"送达"数，见 busCounters 的 TODO）
-	DroppedTotal   uint64 // 累计因溢出丢弃数
-	TopicCount     int    // 当前有订阅方的事件类型数
-	ClientCount    int    // 当前存活 Client 数
+	PublishedTotal uint64 // Total events published.
+	RoutedTotal    uint64 // Total successful [router.submit] calls (not deliveries; see TODO in [busCounters]).
+	DroppedTotal   uint64 // Total dropped due to overflow.
+	TopicCount     int    // Number of event types with subscribers.
+	ClientCount    int    // Number of live clients.
 }
 
 func (b *Bus) Stats() BusStats {
@@ -32,8 +32,8 @@ func (b *Bus) countPublished()       { b.counters.published.Add(1) }
 func (b *Bus) countRouted()          { b.counters.routed.Add(1) }
 func (b *Bus) countDropped(n uint64) { b.counters.dropped.Add(n) }
 
-// hasSubscriber 报告类型 eventType 当前是否至少有一个订阅方。
-// 发布方可借此跳过昂贵的事件构造；路由以 deliverySnapshot 的实际快照为准。
+// hasSubscriber reports whether eventType currently has at least one subscriber.
+// Publishers may use this to skip expensive event construction.
 func (b *Bus) hasSubscriber(eventType reflect.Type) bool {
 	b.topicsMu.RLock()
 	defer b.topicsMu.RUnlock()

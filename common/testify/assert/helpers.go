@@ -39,11 +39,6 @@ func objectsAreEqual(expected, actual any) bool {
 }
 
 // getLen reports the length of a value that supports len().
-//
-// The recover is load-bearing rather than defensive: reflect's Len panics for
-// kinds that have no length (int, bool, struct, ...), and that case has to come
-// back as a reported failure instead of a crash. Deferring it also covers a nil
-// argument, whose reflect.Value is invalid.
 func getLen(x any) (length int, ok bool) {
 	v := reflect.ValueOf(x)
 	defer func() {
@@ -54,10 +49,7 @@ func getLen(x any) (length int, ok bool) {
 
 // containsElement reports (applicable, found) for "list contains element":
 // a substring for strings, a key for maps, an element for slices and arrays.
-//
-// As in getLen, the recover turns "this type has no containment" into a
-// reported failure rather than a panic from reflect.
-func containsElement(list, element any) (ok, found bool) {
+func containsElement(list, element any) (applicable, found bool) {
 	listType := reflect.TypeOf(list)
 	if listType == nil {
 		return false, false
@@ -65,16 +57,13 @@ func containsElement(list, element any) (ok, found bool) {
 
 	defer func() {
 		if recover() != nil {
-			ok, found = false, false
+			applicable, found = false, false
 		}
 	}()
 
 	listValue := reflect.ValueOf(list)
 	switch listType.Kind() {
 	case reflect.String:
-		// Comparing against reflect rather than asserting to string keeps
-		// named string types (type Name string) working, and makes a non-string
-		// element "not applicable" instead of silently "not found".
 		el := reflect.ValueOf(element)
 		if el.Kind() != reflect.String {
 			return false, false

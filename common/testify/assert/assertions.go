@@ -2,14 +2,12 @@ package assert
 
 import "fmt"
 
-// The T1 tier of the extraction in wiki/testify_api.md: the seven assertions
-// every one of the five reference projects used. The rest of the tiers are
-// deliberately absent — see that document for what they are and the usage data
-// behind the ordering.
-
-// Equal asserts that expected and actual are equal. Equality is
-// reflect.DeepEqual with the two adjustments described on objectsAreEqual: nil
-// compared directly, and []byte compared by content.
+// Equal asserts that expected and actual are equal.
+//
+//   - nil compared directly
+//   - []byte compared by content.
+//
+// Note can't compare func
 //
 //	assert.Equal(t, "hello", greeting)
 func Equal(t TestingT, expected, actual any, msgAndArgs ...any) bool {
@@ -103,8 +101,8 @@ func Contains(t TestingT, s, element any, msgAndArgs ...any) bool {
 		h.Helper()
 	}
 
-	ok, found := containsElement(s, element)
-	if !ok {
+	applicable, found := containsElement(s, element)
+	if !applicable {
 		return fail(t, fmt.Sprintf("%T is not something that can contain %s", s, formatBounded("%#v", element)),
 			msgAndArgs...)
 	}

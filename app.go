@@ -7,52 +7,29 @@ import (
 	"github.com/n24-x/fe/feconfig"
 )
 
-// App is a framework user's handle on one config slot: it owns the Runtime
-// built from that config, Start builds and starts a replacement on config
-// change, and Stop ends the active one (the process-exit path).
+// App is the user-facing handle for a Runtime and its Config. App owns the
+// active Runtime and controls its lifecycle: Start, Reload and Stop it.
 //
-// The two kinds of fe user each get one word: a module developer implements
-// [Module] (and [Provisioner]) and has instances loaded into a config; a
-// framework user drives an App. An App is to a Runtime what a Module is to an
-// Instance — the longer-lived object that produces and owns the shorter-lived
-// one.
-//
-// # Concurrency contract
-//
-// Two locks, because the work Start does is user code (Provision, then every
-// instance's Start and Stop) and may take arbitrarily long:
-//
-//   - startMu serializes Start, so two reloads cannot interleave.
-//   - mu guards current and stopped only. It is never held across user code,
-//     so Stop can preempt an in-flight Start rather than waiting for it — the
-//     difference between a SIGINT being honored promptly and the process
-//     hanging for as long as a reload takes.
-//
-// TODO(next):
-// App is the seam reserved for future hot reload of the machine config
-// (mirroring caddy's currentCtx / changeConfig mechanism). The Runtime flow
-// itself (NewRuntime) does not depend on App.
+// TODO(next): App does not implement Reload yet.
 type App struct {
-	// startMu serializes Start: one reload at a time.
+	// only one start/reload at the same time.
 	startMu sync.Mutex
 
 	// mu guards the fields below. Never held across user code.
 	mu sync.Mutex
+
 	// current is the active Runtime, if any.
 	current *Runtime
-	// stopped records that Stop ran. Stop is terminal, so the App is
-	// single-use: a Start already in flight when it happens must not install
-	// the Runtime it just built (see Start).
+
+	// stopped records that the App has been stopped.
+	// Once stopped, it cannot be started again.
 	stopped bool
 
-	// name labels this App in its own records, as the "app" attribute. It is
-	// optional; see [New].
+	// name labels this App. It is optional, see [New].
 	name string
 
-	// logger records this App's and its Runtime's lifecycle. It comes from the
-	// handler the application supplied to [New]; when there is none it
-	// discards, so a zero-value App is usable and a library stays silent. See
-	// logging.go for the seam.
+	// logger records this App's and its Runtime's lifecycle. If none, it discards,
+	// and the App stays silent. See logging.go for the seam.
 	logger *slog.Logger
 }
 
