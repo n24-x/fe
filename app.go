@@ -16,7 +16,7 @@ type App struct {
 	// outside it.
 	loadMu sync.Mutex
 
-	// mu guards the fields: current and stopped. Never held across user code.
+	// mu guards the fields: current and stopped. Never held across module code.
 	mu sync.Mutex
 	// current is the active Runtime, if any.
 	current *Runtime
@@ -27,8 +27,8 @@ type App struct {
 	// name labels this App.
 	name string
 
-	// logger records this App's and its Runtime's lifecycle. If none, it discards,
-	// and the App stays silent. See logging.go for the seam.
+	// logger is the App's logger, provided by the application. It is used to
+	// create the logger for each Runtime.
 	logger *slog.Logger
 }
 
@@ -42,8 +42,9 @@ type Options struct {
 	// SlogHandler receives every record the framework reports about this [App],
 	// its Runtimes, and (through them) their instances.
 	//
-	// There is no default: nil discards. See logging.go for what to pass
-	// and why it is a [slog.Handler], not a logger.
+	// There is no default: nil discards. See
+	// https://github.com/n24-x/fe/blob/main/docs/logging.md for what to pass and
+	// why it is a [slog.Handler], not a logger.
 	SlogHandler slog.Handler
 }
 
@@ -74,7 +75,7 @@ func (a *App) Start(mc *feconfig.MachineConfig) error {
 	a.loadMu.Lock()
 	defer a.loadMu.Unlock()
 
-	log := orDiscard(a.logger)
+	log := ensureLogger(a.logger)
 	log.Info("app starting")
 
 	// Runtime.cfg is read-only, and two Apps sharing one *MachineConfig
@@ -134,7 +135,7 @@ func (a *App) Stop() error {
 		return nil
 	}
 
-	log := orDiscard(a.logger)
+	log := ensureLogger(a.logger)
 	log.Info("app stopping")
 	err := r.Stop()
 	if err != nil {

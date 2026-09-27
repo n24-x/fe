@@ -82,7 +82,7 @@ func TestNewAppNamesRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: unexpected error: %v", err)
 	}
-	orDiscard(app.logger).Info("hello")
+	ensureLogger(app.logger).Info("hello")
 
 	lines := capture.all()
 	if len(lines) != 1 {
@@ -102,7 +102,7 @@ func TestNewAppAnonymous(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: unexpected error: %v", err)
 	}
-	orDiscard(app.logger).Info("hello")
+	ensureLogger(app.logger).Info("hello")
 
 	lines := capture.all()
 	if len(lines) != 1 {
@@ -122,7 +122,7 @@ func TestNewAppNilHandler(t *testing.T) {
 		t.Fatalf("New: unexpected error: %v", err)
 	}
 
-	orDiscard(app.logger).Info("goes nowhere") // must not panic
+	ensureLogger(app.logger).Info("goes nowhere") // must not panic
 }
 
 // TestAppZeroValueLogsSafely verifies the zero-value App — the form tests and
@@ -130,7 +130,7 @@ func TestNewAppNilHandler(t *testing.T) {
 // the only way to get a working App.
 func TestAppZeroValueLogsSafely(t *testing.T) {
 	a := new(App)
-	orDiscard(a.logger).Info("goes nowhere") // must not panic
+	ensureLogger(a.logger).Info("goes nowhere") // must not panic
 }
 
 // TestAppAndRuntimeLogsReachHandler verifies the whole chain end to end: the

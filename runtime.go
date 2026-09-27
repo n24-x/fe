@@ -197,7 +197,7 @@ func NewRuntime(mc *feconfig.MachineConfig) (*Runtime, error) {
 		done:      make(chan struct{}),
 		cfg:       mc,
 		bus:       eventbus.NewWithOptions(mc.Options.Bus),
-		log:       orDiscard(mc.Options.Logger),
+		log:       ensureLogger(mc.Options.Logger),
 		instances: make(map[InstanceID]Instance, len(order)),
 		mods:      make(map[ModuleID]bool, len(order)),
 		lifecycle: lifecycle{startOrder: make([]InstanceID, 0, len(order))},
