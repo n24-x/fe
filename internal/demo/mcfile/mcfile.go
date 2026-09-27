@@ -1,7 +1,7 @@
 // Package mcfile is a development-only helper: it reads a machine config file
 // into a feconfig.MachineConfig.
 //
-// It lives under internal/testing because the framework does not own the step
+// It lives under internal/demo because the framework does not own the step
 // before a machine config exists. What a human writes, in what format, and the
 // adapter that expands it into an MC are the application's business — fe
 // exports no MC parser, and takes a MachineConfig value however it was built.

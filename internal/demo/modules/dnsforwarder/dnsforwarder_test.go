@@ -9,7 +9,7 @@ import (
 	"github.com/n24-x/fe"
 	"github.com/n24-x/fe/eventbus"
 	"github.com/n24-x/fe/feconfig"
-	"github.com/n24-x/fe/internal/testing/modules/dns"
+	"github.com/n24-x/fe/internal/demo/modules/dns"
 )
 
 // fakeRT is a minimal fe.RuntimeAccess fake for module tests: Instance

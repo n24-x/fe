@@ -1,13 +1,13 @@
 // Command fe-demo rehearses the Runtime pipeline end to end against a
 // machine config file, one stage at a time, as the framework is built out.
 //
-// It lives under internal/testing: it is a development scratchpad, not part
-// of the fe framework. It registers test modules by importing them; the test
+// It lives under internal/demo: it is a development scratchpad, not part of
+// the fe framework. It registers test modules by importing them; the test
 // modules live in ../modules.
 //
 // Implemented stages:
 //
-//	[1] parse the machine config (internal/testing/mcfile, strict) + config
+//	[1] parse the machine config (internal/demo/mcfile, strict) + config
 //	    semantic validation (feconfig.MachineConfigValidate)
 //	[2] runtime-level semantic validation (fe.ValidateRuntimeConfig)
 //	[3]+  run the config through the App — the application-shaped path:
@@ -28,15 +28,15 @@ import (
 
 	"github.com/n24-x/fe"
 	"github.com/n24-x/fe/feconfig"
-	"github.com/n24-x/fe/internal/testing/mcfile"
+	"github.com/n24-x/fe/internal/demo/mcfile"
 
 	// Register test modules via import side effect (their init() calls
 	// fe.RegisterModule). Without importing a module's package, its module
 	// type is not registered and runtime semantic validation rejects it.
-	_ "github.com/n24-x/fe/internal/testing/modules/dns"
-	_ "github.com/n24-x/fe/internal/testing/modules/dnsforwarder"
-	_ "github.com/n24-x/fe/internal/testing/modules/endpointproxy"
-	_ "github.com/n24-x/fe/internal/testing/modules/logger"
+	_ "github.com/n24-x/fe/internal/demo/modules/dns"
+	_ "github.com/n24-x/fe/internal/demo/modules/dnsforwarder"
+	_ "github.com/n24-x/fe/internal/demo/modules/endpointproxy"
+	_ "github.com/n24-x/fe/internal/demo/modules/logger"
 )
 
 func main() {

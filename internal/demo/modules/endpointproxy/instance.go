@@ -7,7 +7,7 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/n24-x/fe/internal/testing/modules/dnsforwarder"
+	"github.com/n24-x/fe/internal/demo/modules/dnsforwarder"
 )
 
 // Instance is an endpoint.proxy.server module instance.
