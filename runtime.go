@@ -94,21 +94,24 @@ func (v moduleView) BusClient(name string) (*eventbus.Client, error) {
 	return v.r.BusClient(name)
 }
 
-// lifecycle is the Runtime's lifecycle state machine (issue.md D4/D21):
-// created → started → stopped.
+// lifecycle is the Runtime's lifecycle state machine:
+//
+//	created → started → stopped
+//	created → stopped            (a failed Start, or Stop before Start)
 type lifecycle struct {
 	// startOrder is the order in which instances were created during
-	// NewRuntime (topological: deps first), recorded as instance ids. It
-	// is fixed at construction. Start walks it forward; Stop walks it in
-	// reverse (D4).
+	// [NewRuntime] (topological order, dependencies first), recorded as
+	// instance ids. It is fixed at construction. [Runtime.Start] walks it
+	// forward; [Runtime.Stop] walks it in reverse.
 	startOrder []InstanceID
 
-	// started reports that Start completed successfully: every instance
-	// is running.
+	// started reports that the Runtime is started: every instance is running.
+	// [Runtime.Stop] resets it, after using it to decide whether there is
+	// anything to stop.
 	started bool
-	// stopped reports that the Runtime reached its terminal state: Stop
-	// was called, or a Start attempt failed and was rolled back. A stopped
-	// Runtime cannot be started again.
+	// stopped reports that the Runtime reached its terminal state:
+	// [Runtime.Stop] was called, or a [Runtime.Start] attempt failed and was
+	// rolled back. A stopped Runtime cannot be started again.
 	stopped bool
 }
 
