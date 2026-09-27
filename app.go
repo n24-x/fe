@@ -35,43 +35,34 @@ type App struct {
 	logger *slog.Logger
 }
 
-// Options configures an [App] in [New].
+// Options configures an [App] in [New]. Every member is optional and none is
+// validated.
 type Options struct {
-	// Name labels the App in its own log records (the "app" attribute). It is
-	// optional and is NOT validated: an unnamed App is a normal App, it simply
-	// carries no app attribute.
+	// Name labels the App, as the "app" attribute, in the records it produces —
+	// and, by derivation, in its Runtime's. Empty means no attribute.
 	Name string
 
-	// SlogHandler receives every record the framework writes about this App,
-	// its Runtimes and (through the Runtime) its instances. fe supplies no
-	// default: nil discards. See logging.go for what to pass and why fe asks
-	// for a handler rather than a logger.
+	// SlogHandler receives every record the framework reports about this [App],
+	// its Runtimes, and (through them) their instances.
+	//
+	// There is no default: nil discards. See logging.go for what to pass
+	// and why it is a [slog.Handler], not a logger.
 	SlogHandler slog.Handler
 }
 
-// New returns an App that reports its lifecycle to opts.SlogHandler.
+// New returns a [App].
 //
-// Neither option is required and the App never fails to build, so the error is
-// always nil today; it is in the signature so a future check (a reserved name,
-// say) does not break callers.
-//
-// New is a convenience, not the only way: the zero value
-// (<code>new(App)</code>) is a working App that discards everything, which is
-// what tests and throwaway programs want.
+// The error is always nil today — an App never fails to construct — and is in
+// the signature so a future check (a reserved name, say) does not break
+// callers.
 func New(opts Options) (*App, error) {
 	logger := loggerFrom(opts.SlogHandler)
 	if opts.Name != "" {
 		// Attach the name at the source so every derived logger — the Runtime's
-		// and every logger below it — carries it without repeating the call.
+		// and every logger below it — without writing it again everywhere.
 		logger = logger.With("app", opts.Name)
 	}
 	return &App{name: opts.Name, logger: logger}, nil
-}
-
-// base returns the logger to derive this App's own records from. It exists so
-// the zero-value App is safe: a nil logger discards rather than panicking.
-func (a *App) base() *slog.Logger {
-	return orDiscard(a.logger)
 }
 
 // Start makes mc the active config: it builds and starts a new Runtime from
@@ -91,7 +82,7 @@ func (a *App) Start(mc *feconfig.MachineConfig) error {
 	a.loadMu.Lock()
 	defer a.loadMu.Unlock()
 
-	log := a.base()
+	log := orDiscard(a.logger)
 	log.Info("app starting")
 
 	// Hand the Runtime this App's logger through a copy of mc, so the caller's
@@ -171,7 +162,7 @@ func (a *App) Stop() error {
 		return nil
 	}
 
-	log := a.base()
+	log := orDiscard(a.logger)
 	log.Info("app stopping")
 	err := r.Stop()
 	if err != nil {

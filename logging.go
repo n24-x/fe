@@ -41,8 +41,9 @@ func loggerFrom(h slog.Handler) *slog.Logger {
 }
 
 // orDiscard returns l unchanged, or a discarding logger when l is nil. It
-// guards the go-between case: a logger handed along by value (mc.Options.Logger)
-// can legitimately be absent, and callers must not have to check.
+// guards the go-between case: a logger handed along by value — a zero-value
+// App's, or mc.Options.Logger — can legitimately be absent, and callers must
+// not have to check.
 func orDiscard(l *slog.Logger) *slog.Logger {
 	if l == nil {
 		return loggerFrom(nil)
