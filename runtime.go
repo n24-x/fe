@@ -31,13 +31,6 @@ import (
 //     construction — the App ([App.Start]/[App.Stop], mutex-guarded) or the
 //     application's single main goroutine drives the lifecycle; instance
 //     goroutines never hold a *Runtime and cannot reach Start/Stop.
-//
-// TODO(next):
-// Three orthogonal channels (see issue.md, review 4):
-//   - done: the Runtime's lifecycle signal. Instances that spawn goroutines
-//     select on it; cleanup closes it.
-//   - Bus: state-change notifications (one-way, no return value).
-//   - (a future info container: identity/deps/logger handed to instances).
 type Runtime struct {
 	// done is the Runtime's lifecycle signal: created in NewRuntime, closed by
 	// cleanup. Instance goroutines select on it to learn that the Runtime is
@@ -51,10 +44,10 @@ type Runtime struct {
 	// forever.
 	done chan struct{}
 
-	// bus is the Runtime's state-change notification channel (issue.md §7):
-	// built by NewRuntime from the config's Options.Bus, released by cleanup.
-	// Instances never touch it directly — they get a client of their own from
-	// [Runtime.BusClient].
+	// bus is the Runtime's state-change notification channel (issue.md
+	// D27/D35): built by NewRuntime from the config's Options.Bus, released by
+	// cleanup. Instances never touch it directly — they get a client of their
+	// own from [Runtime.BusClient].
 	bus *eventbus.Bus
 
 	// log records this Runtime's lifecycle. It is snapshotted from
@@ -77,13 +70,9 @@ type Runtime struct {
 	// mods is the set of module types used by this Runtime.
 	mods map[ModuleID]bool
 
-	// lifecycle is the Runtime's lifecycle bookkeeping.
-	//
-	// TODO(next):
-	// (issue.md D4/D21):
-	// the topological instance order plus the one-shot started/stopped
-	// flags. Grouped under one field to keep Runtime lean while it is
-	// still early.
+	// lifecycle is the Runtime's lifecycle bookkeeping (issue.md D4/D21): the
+	// topological instance order plus the one-shot started/stopped flags.
+	// Grouped under one field to keep Runtime lean while it is still early.
 	lifecycle lifecycle
 }
 
@@ -96,6 +85,11 @@ type Runtime struct {
 // Modules never receive a *Runtime: the framework hands out the sealed
 // [moduleView] instead, so the hidden part stays hidden even against a type
 // assertion. Tests may fake the interface.
+//
+// A logger is the one channel not here yet: identity arrives as
+// spec.InstanceID and dependencies through Instance, so how a module obtains a
+// logger (a method on this view, or a module it depends on) is the open
+// question (issue.md, the info-container item).
 type RuntimeAccess interface {
 	// Instance resolves a dependency instance by its config id.
 	Instance(id string) (inst Instance, err error)
@@ -147,11 +141,9 @@ type lifecycle struct {
 
 // ValidateRuntimeConfig performs runtime-level semantic validation of a
 // machine config: every instance's mod_id must be registered AND produce
-// instances (implement Provisioner).
-//
-// TODO(next)
-// This is flow step [2] (see cmd/main.go).
-// Syntax/structure validation is feconfig.MachineConfigValidate's job.
+// instances (implement Provisioner). Syntax and structure are
+// [feconfig.MachineConfigValidate]'s job; this is the runtime-level half
+// (issue.md §4).
 //
 // It is a pure check with no side effects; NewRuntime calls it first.
 func ValidateRuntimeConfig(mc *feconfig.MachineConfig) error {
@@ -169,7 +161,8 @@ func ValidateRuntimeConfig(mc *feconfig.MachineConfig) error {
 
 // NewRuntime builds a Runtime from a machine config.
 //
-// Pipeline implemented so far (see issue.md §4, flow steps [2]-[3]):
+// Pipeline implemented so far (issue.md §4; internal/testing/demo/main.go
+// walks the stages):
 //
 //	ValidateRuntimeConfig (semantic validation)
 //	→ resolve the instance creation order via the dependency graph
@@ -177,9 +170,8 @@ func ValidateRuntimeConfig(mc *feconfig.MachineConfig) error {
 //	  creation order in lifecycle.startOrder
 //
 // The returned Runtime is NOT started: instances are created but idle. The
-// caller starts them with Start (flow step [4]), or discards the Runtime
-// with Stop, which releases its lifecycle signal and Bus without starting
-// anything.
+// caller starts them with Start, or discards the Runtime with Stop, which
+// releases its lifecycle signal and Bus without starting anything.
 //
 // On failure NewRuntime returns no Runtime for the caller to Stop, so every
 // error path below cleans up after itself before returning (see cleanup).
@@ -282,7 +274,7 @@ func instanceOrder(mc *feconfig.MachineConfig) ([]*feconfig.InstanceSpec, error)
 
 // provision constructs one instance from a spec by delegating to the
 // module's Provisioner. Config parsing is entirely the module author's job
-// (the framework does not decode spec.Config — see issue.md func.md).
+// (the framework does not decode spec.Config — issue.md D20).
 // GetModule returning a module that ValidateRuntimeConfig accepted as a
 // Provisioner guarantees the type assertion below succeeds.
 //
@@ -296,9 +288,9 @@ func (r *Runtime) provision(spec feconfig.InstanceSpec) (Instance, error) {
 	return m.(Provisioner).Provision(spec, moduleView{r: r})
 }
 
-// Start starts the Runtime: it transitions into the Running state (flow
-// step [4]) by starting every instance in creation order — deps first,
-// matching the order recorded in lifecycle.startOrder (D4).
+// Start starts the Runtime: it transitions into the Running state by starting
+// every instance in creation order — deps first, matching the order recorded
+// in lifecycle.startOrder (D4).
 //
 // Start is one-shot and failure-atomic (D3):
 //   - if an instance fails to start, every instance that already started is
