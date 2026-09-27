@@ -28,7 +28,8 @@ type App struct {
 	name string
 
 	// logger is the App's logger, provided by the application. It is used to
-	// create the logger for each Runtime.
+	// create each Runtime's logger, which records only the Runtime's lifecycle,
+	// not instance lifecycle or instance logs.
 	logger *slog.Logger
 }
 
@@ -39,8 +40,10 @@ type Options struct {
 	// and, by derivation, in its Runtime's. Empty means no attribute.
 	Name string
 
-	// SlogHandler receives every record the framework reports about this [App],
-	// its Runtimes, and (through them) their instances.
+	// SlogHandler receives the records the framework reports — App and Runtime
+	// lifecycle only. Instance lifecycle and instance logs are the module's
+	// business: the framework does not report them, and a module that logs does
+	// so with its own logger.
 	//
 	// There is no default: nil discards. See
 	// https://github.com/n24-x/fe/blob/main/docs/logging.md for what to pass and

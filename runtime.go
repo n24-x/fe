@@ -16,22 +16,19 @@ import (
 //
 // # Concurrency contract
 //
-// Runtime has two distinct concurrency boundaries: the framework lifecycle
-// and the RuntimeAccess view exposed to instance goroutines.
+// Runtime has two distinct concurrency boundaries: the RuntimeAccess view
+// exposed to instance goroutines and the framework lifecycle.
 //
-// A. RuntimeAccess
+// A. [RuntimeAccess] (for module author)
 //
 // Instance goroutines may call [Runtime.Instance], [Runtime.Done], and
 // [Runtime.BusClient] concurrently.
 //
-// After NewRuntime, the instances map is never modified, so concurrent reads
+// After [NewRuntime], the instances map is never modified, so concurrent reads
 // are race-free. The Bus also protects its own client list.
 //
-// The RuntimeAccess view exposes only these concurrency-safe operations,
-// keeping lifecycle mutation outside instance goroutines.
-//
-// Instance goroutines cannot reach Start or Stop: they receive only the
-// narrow [RuntimeAccess] view.
+// Instance goroutines cannot reach Start or Stop: they receive only the narrow
+// [RuntimeAccess] view.
 //
 // B. Framework lifecycle
 //
@@ -40,45 +37,28 @@ import (
 // The App ([App.Start]/[App.Stop]) or the application's single main goroutine
 // drives the lifecycle.
 type Runtime struct {
-	// done is the Runtime's lifecycle signal: created in NewRuntime, closed by
-	// cleanup. Instance goroutines select on it to learn that the Runtime is
-	// going away.
-	//
-	// It is held bidirectionally but only ever handed out receive-only (see
-	// [RuntimeAccess.Done]), so the direction itself stops a module from
-	// closing it: the same guarantee the unexported cancel func used to give,
-	// now enforced by the type system instead of by convention. Unlike
-	// context.Context.Done it is never nil, so selecting on it cannot block
-	// forever.
-	done chan struct{}
-
-	// bus is the Runtime's state-change notification channel (issue.md
-	// D27/D35): built by NewRuntime from the config's Options.Bus, released by
-	// cleanup. Instances never touch it directly — they get a client of their
-	// own from [Runtime.BusClient].
-	bus *eventbus.Bus
-
-	// log records this Runtime's lifecycle. It is snapshotted from
-	// mc.Options.Logger at construction (nil becomes a discarding logger), so
-	// nothing injected later can change what an existing Runtime writes
-	// through. It already carries the App's attribution, having been derived
-	// from the App's logger.
-	//
-	// Only the Runtime's own transitions are recorded: instance lifecycle is
-	// the module's business, not the framework's. A failing instance is still
-	// identifiable — its id is in the error Start returns.
-	log *slog.Logger
-
 	// instances are the running instances, keyed by their id.
 	instances map[InstanceID]Instance
 
 	// mods is the set of module types used by this Runtime.
 	mods map[ModuleID]bool
 
-	// lifecycle is the Runtime's lifecycle bookkeeping (issue.md D4/D21): the
-	// topological instance order plus the one-shot started/stopped flags.
-	// Grouped under one field to keep Runtime lean while it is still early.
+	// lifecycle tracks the instance order and one-shot lifecycle state.
 	lifecycle lifecycle
+
+	// done is the Runtime's lifecycle signal: created in [NewRuntime] and closed
+	// by cleanup(). Instance goroutines use it to detect that the Runtime is
+	// going away.
+	done chan struct{}
+
+	// bus is the Runtime's state-change notification channel: built by [NewRuntime]
+	// from the config's [feconfig.Options.Bus], released by cleanup(). Instances
+	// never touch it directly — they get a client of their own from [Runtime.BusClient].
+	bus *eventbus.Bus
+
+	// log records this Runtime's lifecycle. It is snapshotted from
+	// mc.Options.Logger at construction; nil becomes a discarding logger.
+	log *slog.Logger
 }
 
 // RuntimeAccess is the module-visible view of the Runtime handed to a
@@ -191,12 +171,12 @@ func NewRuntime(mc *feconfig.MachineConfig) (*Runtime, error) {
 	}
 
 	r := &Runtime{
-		done:      make(chan struct{}),
-		bus:       eventbus.NewWithOptions(mc.Options.Bus),
-		log:       ensureLogger(mc.Options.Logger),
 		instances: make(map[InstanceID]Instance, len(order)),
 		mods:      make(map[ModuleID]bool, len(order)),
 		lifecycle: lifecycle{startOrder: make([]InstanceID, 0, len(order))},
+		done:      make(chan struct{}),
+		bus:       eventbus.NewWithOptions(mc.Options.Bus),
+		log:       ensureLogger(mc.Options.Logger),
 	}
 
 	for _, spec := range order {
