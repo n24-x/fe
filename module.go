@@ -34,11 +34,15 @@ func (mi ModuleInfo) String() string {
 	return string(mi.ID)
 }
 
-// Provisioner is implemented by Modules that produce Instances. The module
-// author:
+// Provisioner is implemented by Modules that produce Instances.
+//
+// The module author:
 //   - parses [feconfig.InstanceSpec.Config] (the framework does not decode it);
 //   - captures runtime needs into the instance's fields — see [RuntimeAccess];
 //   - returns a fresh, self-contained Instance.
+//
+// Provision MUST be side-effect-free: resources are acquired in
+// [Instance.Start] and released in [Instance.Stop].
 type Provisioner interface {
 	Provision(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error)
 }

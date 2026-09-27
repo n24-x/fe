@@ -108,7 +108,7 @@ func TestRuntimeStartStopOrder(t *testing.T) {
 	if want := "start:a start:b start:c"; trace.got() != want {
 		t.Fatalf("after Start, trace = %q, want %q", trace.got(), want)
 	}
-	if isClosed(rt.Done()) {
+	if isClosed(rt.doneSignal()) {
 		t.Fatal("lifecycle signal closed while running")
 	}
 
@@ -118,7 +118,7 @@ func TestRuntimeStartStopOrder(t *testing.T) {
 	if want := "start:a start:b start:c stop:c stop:b stop:a"; trace.got() != want {
 		t.Fatalf("after Stop, trace = %q, want %q", trace.got(), want)
 	}
-	if !isClosed(rt.Done()) {
+	if !isClosed(rt.doneSignal()) {
 		t.Fatal("after Stop, the lifecycle signal is not closed")
 	}
 }
@@ -157,7 +157,7 @@ func TestRuntimeStartFailureRollsBack(t *testing.T) {
 	if want := "start:a stop:a"; trace.got() != want {
 		t.Fatalf("after failed Start, trace = %q, want %q", trace.got(), want)
 	}
-	if !isClosed(rt.Done()) {
+	if !isClosed(rt.doneSignal()) {
 		t.Fatal("after failed Start, the lifecycle signal is not closed")
 	}
 
@@ -238,7 +238,7 @@ func TestRuntimeStopBeforeStart(t *testing.T) {
 	if trace.got() != "" {
 		t.Fatalf("Stop before Start stopped instances: trace = %q", trace.got())
 	}
-	if !isClosed(rt.Done()) {
+	if !isClosed(rt.doneSignal()) {
 		t.Fatal("Stop before Start left the lifecycle signal open")
 	}
 	if err := rt.Start(); err == nil {
@@ -265,17 +265,17 @@ func TestRuntimeInstanceLookup(t *testing.T) {
 	}
 
 	for _, id := range []string{testChainLeafID, testChainMidID} {
-		if _, err := rt.Instance(id); err != nil {
+		if _, err := rt.instance(id); err != nil {
 			t.Fatalf("Instance(%q): %v", id, err)
 		}
 	}
 
-	_, err = rt.Instance(absent)
+	_, err = rt.instance(absent)
 	if !errors.Is(err, ErrInstanceNotFound) {
 		t.Fatalf("Instance(%q) error = %v, want errors.Is(err, ErrInstanceNotFound)", absent, err)
 	}
 
-	_, err = rt.Instance("not-a-uuid")
+	_, err = rt.instance("not-a-uuid")
 	if err == nil {
 		t.Fatal("Instance(bad id): expected error")
 	}
@@ -385,7 +385,7 @@ func TestRuntimeStartRollbackStopError(t *testing.T) {
 	if !errors.Is(err, stopBoom) {
 		t.Fatalf("Start error = %v, want errors.Is(err, stopBoom) (rollback Stop failure joined)", err)
 	}
-	if !isClosed(rt.Done()) {
+	if !isClosed(rt.doneSignal()) {
 		t.Fatal("the lifecycle signal must be closed after a failed Start with a rollback error")
 	}
 	if err := rt.Stop(); err != nil {
@@ -434,12 +434,12 @@ func TestRuntimeConcurrentReadAccess(t *testing.T) {
 			defer wg.Done()
 			for range 200 {
 				for _, id := range ids {
-					if _, err := rt.Instance(id); err != nil {
+					if _, err := rt.instance(id); err != nil {
 						t.Errorf("concurrent Instance(%q): %v", id, err)
 						return
 					}
 				}
-				rt.Done() // read-only; must never race
+				rt.doneSignal() // read-only; must never race
 			}
 		}()
 	}

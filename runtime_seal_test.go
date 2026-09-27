@@ -34,10 +34,15 @@ type sealInst struct{}
 func (sealInst) Start() error { return nil }
 func (sealInst) Stop() error  { return nil }
 
-// TestRuntimeAccessSealed verifies a module cannot recover the concrete
-// Runtime from the RuntimeAccess it is given. Handing over *Runtime would
-// satisfy the interface but leak Start/Stop through a one-line type assertion,
-// letting a module end the lifecycle the framework owns (issue.md D30).
+// TestRuntimeAccessSealed verifies that what Provision receives is the sealed
+// view and nothing more: an unexported type, which an external package cannot
+// name, carrying exactly the three read-only methods.
+//
+// Handing over *Runtime would satisfy the interface but put Start/Stop in every
+// module's hands, letting a module end the lifecycle the framework owns
+// (issue.md D30). That half is now enforced by the compiler — *Runtime does not
+// implement RuntimeAccess, so passing one to Provision stops building — and
+// this test pins the other half: the value actually handed over.
 func TestRuntimeAccessSealed(t *testing.T) {
 	fe.RegisterModule(sealMod{})
 
@@ -55,8 +60,10 @@ func TestRuntimeAccessSealed(t *testing.T) {
 	if sealCapture == nil {
 		t.Fatal("Provision never ran: nothing to inspect")
 	}
-	if concrete, ok := sealCapture.(*fe.Runtime); ok {
-		t.Fatalf("Provision received %T: a module can call Start/Stop on it and drive the lifecycle", concrete)
+
+	dt := reflect.TypeOf(sealCapture)
+	if dt.Name() != "moduleView" || dt.NumMethod() != 3 {
+		t.Fatalf("Provision received %s with %d methods, want the unexported moduleView carrying three", dt, dt.NumMethod())
 	}
 }
 

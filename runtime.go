@@ -21,8 +21,8 @@ import (
 //
 // A. [RuntimeAccess] (for module author)
 //
-// Instance goroutines may call [Runtime.Instance], [Runtime.Done], and
-// [Runtime.BusClient] concurrently.
+// Instance goroutines may call [RuntimeAccess.Instance], [RuntimeAccess.Done],
+// and [RuntimeAccess.BusClient] concurrently.
 //
 // After [NewRuntime], the instances map is never modified, so concurrent reads
 // are race-free. The Bus also protects its own client list.
@@ -51,9 +51,10 @@ type Runtime struct {
 	// going away.
 	done chan struct{}
 
-	// bus is the Runtime's state-change notification channel: built by [NewRuntime]
-	// from the config's [feconfig.Options.Bus], released by cleanup(). Instances
-	// never touch it directly — they get a client of their own from [Runtime.BusClient].
+	// bus is the Runtime's state-change notification channel: built by
+	// [NewRuntime] from the config's [feconfig.Options.Bus], released by
+	// cleanup(). Instances never touch it directly — they get a client of their
+	// own from [RuntimeAccess.BusClient].
 	bus *eventbus.Bus
 
 	// log records this Runtime's lifecycle. It is snapshotted from
@@ -68,7 +69,11 @@ type Runtime struct {
 //
 // The interface also makes instances easier to test.
 type RuntimeAccess interface {
-	// Instance resolves a dependency instance by its config id.
+	// Instance resolves a dependency instance by its config id — the raw uuid
+	// string as it appears in the machine config. An instance becomes resolvable
+	// once its Provision has returned, and [NewRuntime] provisions dependencies
+	// first, so an instance may call Instance from inside its own
+	// [Provisioner.Provision] to resolve the dependencies it needs.
 	Instance(id string) (inst Instance, err error)
 
 	// Done returns the Runtime's lifecycle signal: closed when the Runtime goes
@@ -79,6 +84,11 @@ type RuntimeAccess interface {
 	// human-readable label for debug logs and client-scoped errors; it is not
 	// required to be unique. Once the Runtime has been stopped the Bus is closed,
 	// so this returns [eventbus.ErrBusClosed].
+	//
+	// Every call returns a fresh client, owned by the caller: close it when the
+	// instance is done with it. Closing is not required — the Bus closes any
+	// client still open when the Runtime stops, and [eventbus.Client.Close] is
+	// idempotent, so closing twice is harmless.
 	BusClient(name string) (client *eventbus.Client, err error)
 }
 
@@ -88,10 +98,10 @@ type moduleView struct{ r *Runtime }
 
 var _ RuntimeAccess = moduleView{}
 
-func (v moduleView) Instance(id string) (Instance, error) { return v.r.Instance(id) }
-func (v moduleView) Done() <-chan struct{}                { return v.r.Done() }
+func (v moduleView) Instance(id string) (Instance, error) { return v.r.instance(id) }
+func (v moduleView) Done() <-chan struct{}                { return v.r.doneSignal() }
 func (v moduleView) BusClient(name string) (*eventbus.Client, error) {
-	return v.r.BusClient(name)
+	return v.r.busClient(name)
 }
 
 // lifecycle is the Runtime's lifecycle state machine:
@@ -295,27 +305,13 @@ func (r *Runtime) Start() error {
 	return nil
 }
 
-// Stop shuts the Runtime down: it stops every started instance in reverse
-// start order, then cleans up — closes the lifecycle signal so instance
-// goroutines wind down, and releases the Bus.
+// Stop stops every started instance in reverse start order, then cleans up the
+// Runtime. It is idempotent: calls after the first return nil.
 //
-// Rules:
-//   - instances that were provisioned but never started (Stop before Start,
-//     or a rolled-back Start) are not stopped — they never began. There is
-//     nothing to release for them either: by contract (D25) Provision is
-//     side-effect-free (config parsing + dependency capture only), so all
-//     resources are Start/Stop-scoped; closing the signal still tells any
-//     goroutines they may have spawned that the Runtime is gone.
-//   - Stop is idempotent: it may be called any number of times, before or
-//     after Start, and after a failed Start. Only the first call releases
-//     anything — the ones after it return early, which is also what keeps the
-//     lifecycle signal from being closed twice.
-//   - errors from individual Stop calls are aggregated with errors.Join.
+// If Start was never completed successfully, no instances are stopped.
+// Errors from individual Stop calls are aggregated with [errors.Join].
 //
-// Not safe for concurrent use with Start or with another Stop: the early
-// return above is the only thing standing between a second call and closing
-// an already-closed channel, so callers must serialize (the App does, under
-// its mutex).
+// Not safe for concurrent use with Start or another Stop.
 func (r *Runtime) Stop() error {
 	if r.lifecycle.stopped {
 		return nil
@@ -338,73 +334,35 @@ func (r *Runtime) Stop() error {
 	return err
 }
 
-// cleanup releases the framework-owned resources of a Runtime: it closes the
-// lifecycle signal (waking every instance goroutine that selects on it) and
-// closes the Bus (which closes every client it handed out).
+// cleanup releases the Runtime's framework-owned resources: it closes the
+// lifecycle signal and the Bus.
 //
-// It must run exactly once per Runtime — unlike the cancel func it replaces,
-// closing an already-closed channel panics. No sync.Once is needed because the
-// callers already guarantee it: NewRuntime's failure paths return nil, so that
-// Runtime reaches nobody else, and both Start's rollback and Stop mark the
-// Runtime stopped, which is the guard Stop checks.
-//
-// It is the teardown of everything NewRuntime acquires, so it serves both
-// kinds of caller: NewRuntime itself, on every construction failure — the
-// caller gets no Runtime to Stop — and Stop, as its last step, once the
-// instances have been stopped.
+// It MUST be called exactly once per Runtime.
 func (r *Runtime) cleanup() {
 	close(r.done)
 	r.bus.Close()
 }
 
-// Instance returns the instance whose config id is id, or an error if no
-// such instance exists in this Runtime. id is the raw uuid string as it
-// appears in the MachineConfig — the string form a module stores when its
-// config references a dependency (D11).
-//
-// Instances become visible only once they have finished Provision (D6), and
-// NewRuntime provisions deps first; so Instance is usable from inside a
-// Provision call to resolve the instance's own dependencies, and at any
-// later point while the Runtime lives.
-func (r *Runtime) Instance(id string) (Instance, error) {
+// instance returns the instance whose config id is id, or an error if no such
+// instance exists in this Runtime.
+func (r *Runtime) instance(id string) (Instance, error) {
 	parsed, err := uuid.Parse(id)
 	if err != nil {
 		return nil, fmt.Errorf("fe: instance %q: invalid id: %w", id, err)
 	}
 	inst, ok := r.instances[InstanceID(parsed)]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s (declared in the referencing instance's deps? see issue.md D11)", ErrInstanceNotFound, id)
+		return nil, fmt.Errorf("%w: %s (declared in the referencing instance's deps?)", ErrInstanceNotFound, id)
 	}
 	return inst, nil
 }
 
-// Done returns the Runtime's lifecycle signal, receive-only. Instance
-// goroutines select on it to know when to stop; Stop, a failed construction
-// and a rolled-back Start all close it.
-//
-// Receive-only is deliberate: a module cannot close a channel it only receives
-// from, so one instance cannot take the whole Runtime down — the rule the
-// unexported cancel func used to encode, now enforced by the type system.
-func (r *Runtime) Done() <-chan struct{} {
+// doneSignal returns the Runtime's lifecycle signal, receive-only.
+func (r *Runtime) doneSignal() <-chan struct{} {
 	return r.done
 }
 
-// BusClient opens a new Bus client named name, for the calling instance to
-// keep for as long as it lives. Every call returns a fresh client; the caller
-// decides how to share it (typically by storing it once, in Provision).
-//
-// name is a label for humans only — it surfaces in [eventbus.Client.Name] and
-// in client-scoped errors (ErrSubscriberExists, ErrPublisherExists) — and does
-// NOT have to be unique: nothing in the framework routes by it, so passing the
-// instance id is a convention, not a requirement.
-//
-// Ownership stays with the caller: close the client once the instance is done
-// with it. Closing is not mandatory, though — the Bus keeps the clients it
-// handed out and closes any still open when it is closed, and Client.Close is
-// idempotent, so closing twice is harmless.
-//
-// Once the Runtime has been stopped (or its construction failed) the Bus is
-// closed, so this returns eventbus.ErrBusClosed instead of a usable client.
-func (r *Runtime) BusClient(name string) (client *eventbus.Client, err error) {
+// busClient opens a new Bus client named name, for the calling instance.
+func (r *Runtime) busClient(name string) (client *eventbus.Client, err error) {
 	return r.bus.NewClient(name)
 }

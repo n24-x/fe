@@ -12,7 +12,7 @@ var (
 	// instance.
 	ErrModuleNotProvisioner = errors.New("fe: module does not produce instances (missing Provisioner)")
 
-	// ErrInstanceNotFound: Runtime.Instance found no instance with the given
+	// ErrInstanceNotFound: Runtime.instance found no instance with the given
 	// config.
 	ErrInstanceNotFound = errors.New("fe: instance not found")
 
