@@ -116,12 +116,8 @@ type lifecycle struct {
 }
 
 // ValidateRuntimeConfig performs runtime-level semantic validation of a
-// machine config: every instance's mod_id must be registered AND produce
-// instances (implement Provisioner). Syntax and structure are
-// [feconfig.MachineConfigValidate]'s job; this is the runtime-level half
-// (issue.md §4).
-//
-// It is a pure check with no side effects; NewRuntime calls it first.
+// machine config: every instance's mod_id MUST be registered, and its module
+// MUST implement [Provisioner].
 func ValidateRuntimeConfig(mc *feconfig.MachineConfig) error {
 	for i, inst := range mc.Instances {
 		m, err := GetModule(ModuleID(inst.ModuleID))
@@ -137,20 +133,18 @@ func ValidateRuntimeConfig(mc *feconfig.MachineConfig) error {
 
 // NewRuntime builds a Runtime from a machine config.
 //
-// Pipeline implemented so far (issue.md §4; internal/testing/demo/main.go
-// walks the stages):
-//
-//	ValidateRuntimeConfig (semantic validation)
-//	→ resolve the instance creation order via the dependency graph
-//	→ instantiate every instance in that order (Provision), recording the
-//	  creation order in lifecycle.startOrder
+// Construction is three steps: [ValidateRuntimeConfig], the instance creation
+// order resolved from the dependency graph (dependencies first), then
+// [Provisioner.Provision] for each instance in that order; the order itself is
+// recorded in lifecycle.startOrder.
 //
 // The returned Runtime is NOT started: instances are created but idle. The
-// caller starts them with Start, or discards the Runtime with Stop, which
-// releases its lifecycle signal and Bus without starting anything.
+// caller starts them with [Runtime.Start], or discards the Runtime with
+// [Runtime.Stop], which releases its lifecycle signal and Bus without starting
+// anything.
 //
 // On failure NewRuntime returns no Runtime for the caller to Stop, so every
-// error path below cleans up after itself before returning (see cleanup).
+// error path below cleans up after itself before returning (see cleanup()).
 func NewRuntime(mc *feconfig.MachineConfig) (*Runtime, error) {
 	if err := ValidateRuntimeConfig(mc); err != nil {
 		return nil, err
@@ -197,14 +191,8 @@ func NewRuntime(mc *feconfig.MachineConfig) (*Runtime, error) {
 	return r, nil
 }
 
-// instanceOrder returns the order in which instances must be created: every
-// instance after all of its deps (deps first).
-//
-// Every spec is a dag node: it Provides its own instance id and Requires its
-// deps' ids (see feconfig.InstanceSpec.Requires/Provides). The "root" specs
-// to resolve are the terminal consumers — specs whose id no other spec
-// depends on. Resolving each terminal consumer yields its whole dependency
-// chain, deps-first (DFS post-order); the merged result covers every spec.
+// instanceOrder returns instances in dependency order: dependencies first.
+// It returns every instance spec exactly once.
 func instanceOrder(mc *feconfig.MachineConfig) ([]*feconfig.InstanceSpec, error) {
 	g := dag.New[string]()
 	for i := range mc.Instances {
@@ -247,11 +235,9 @@ func instanceOrder(mc *feconfig.MachineConfig) ([]*feconfig.InstanceSpec, error)
 	return order, nil
 }
 
-// provision constructs one instance from a spec by delegating to the
-// module's Provisioner. Config parsing is entirely the module author's job
-// (the framework does not decode spec.Config — issue.md D20).
-// GetModule returning a module that ValidateRuntimeConfig accepted as a
-// Provisioner guarantees the type assertion below succeeds.
+// provision constructs an instance from a spec by delegating to the module's
+// [Provisioner.Provision]. Config parsing is the module's responsibility; the
+// type assertion is safe because [ValidateRuntimeConfig] ran first.
 func (r *Runtime) provision(spec feconfig.InstanceSpec) (Instance, error) {
 	m, err := GetModule(ModuleID(spec.ModuleID))
 	if err != nil {
