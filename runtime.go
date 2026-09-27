@@ -61,47 +61,35 @@ type Runtime struct {
 	log *slog.Logger
 }
 
-// RuntimeAccess is the module-visible view of the Runtime handed to a
-// Provision call: resolve a dependency instance, observe the lifecycle
-// signal, open a Bus client. It deliberately hides the rest of the Runtime
-// (lifecycle, registry, …) and sits next to [Runtime], its only real
-// implementation.
+// RuntimeAccess is the module-visible view of the Runtime: resolve dependency
+// instances, watch for the Runtime going away, open Bus clients. Most resources
+// required by the instance are designed to be provided by other instances;
+// for example, logging functionality is provided by the logging instance.
 //
-// Modules never receive a *Runtime: the framework hands out the sealed
-// [moduleView] instead, so the hidden part stays hidden even against a type
-// assertion. Tests may fake the interface.
-//
-// A logger is the one channel not here yet: identity arrives as
-// spec.InstanceID and dependencies through Instance, so how a module obtains a
-// logger (a method on this view, or a module it depends on) is the open
-// question (issue.md, the info-container item).
+// The interface also makes instances easier to test.
 type RuntimeAccess interface {
 	// Instance resolves a dependency instance by its config id.
 	Instance(id string) (inst Instance, err error)
-	// Done returns the Runtime's lifecycle signal, receive-only: it is closed
-	// when the Runtime goes away (Stop, a failed construction, a rolled-back
-	// Start). It is never nil, so a select on it cannot block forever.
+
+	// Done returns the Runtime's lifecycle signal: closed when the Runtime goes
+	// away, and never nil.
 	Done() (done <-chan struct{})
-	// BusClient opens a Bus client for the calling instance. name is a label
-	// for a human reading debug logs and client-scoped errors; it is NOT
-	// required to be unique — the framework does not route by it.
+
+	// BusClient opens a Bus client for the calling instance. name is a
+	// human-readable label for debug logs and client-scoped errors; it is not
+	// required to be unique. Once the Runtime has been stopped the Bus is closed,
+	// so this returns [eventbus.ErrBusClosed].
 	BusClient(name string) (client *eventbus.Client, err error)
 }
 
-// moduleView is the sealed [RuntimeAccess] the framework hands to modules: it
-// forwards exactly the interface's three methods and adds nothing.
-//
-// Handing over *Runtime would satisfy the interface without sealing it. An
-// interface value carries its dynamic type, so a module — which lives in a
-// package of its own — could recover the concrete Runtime with a plain type
-// assertion and call [Runtime.Start] / [Runtime.Stop], driving the lifecycle
-// the framework owns (D30). moduleView's method set is exactly the
-// interface's, and its name is unexported, so such an assertion finds nothing.
+// moduleView is the sealed [RuntimeAccess] the framework hands to instances,
+// so that they cannot access [*Runtime] or control its lifecycle.
 type moduleView struct{ r *Runtime }
+
+var _ RuntimeAccess = moduleView{}
 
 func (v moduleView) Instance(id string) (Instance, error) { return v.r.Instance(id) }
 func (v moduleView) Done() <-chan struct{}                { return v.r.Done() }
-
 func (v moduleView) BusClient(name string) (*eventbus.Client, error) {
 	return v.r.BusClient(name)
 }
@@ -261,9 +249,6 @@ func instanceOrder(mc *feconfig.MachineConfig) ([]*feconfig.InstanceSpec, error)
 // (the framework does not decode spec.Config — issue.md D20).
 // GetModule returning a module that ValidateRuntimeConfig accepted as a
 // Provisioner guarantees the type assertion below succeeds.
-//
-// The module receives a [moduleView], never the Runtime itself: see that type
-// for why the distinction matters.
 func (r *Runtime) provision(spec feconfig.InstanceSpec) (Instance, error) {
 	m, err := GetModule(ModuleID(spec.ModuleID))
 	if err != nil {
@@ -443,8 +428,3 @@ func (r *Runtime) Done() <-chan struct{} {
 func (r *Runtime) BusClient(name string) (client *eventbus.Client, err error) {
 	return r.bus.NewClient(name)
 }
-
-// moduleView is what Provision receives; *Runtime is deliberately not handed
-// out (see that type). The delegation above keeps the two in step: renaming a
-// Runtime method breaks this assertion.
-var _ RuntimeAccess = moduleView{}
