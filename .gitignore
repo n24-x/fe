@@ -31,4 +31,7 @@ go.work.sum
 # .idea/
 # .vscode/
 
+# Built by internal/demo/make.py (the demo goes away at v1.0.0).
+internal/demo/fe-demo
+
 temp/
