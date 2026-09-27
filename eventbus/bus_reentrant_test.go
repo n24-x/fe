@@ -96,7 +96,7 @@ func TestReentrantPublishAfterStallNoDeadlock(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for i := 0; i < 5000; i++ {
+		for i := range 5000 {
 			pub.Publish(i)
 		}
 	}()

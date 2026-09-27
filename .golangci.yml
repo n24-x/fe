@@ -1,0 +1,81 @@
+# golangci-lint configuration for the fe module.
+#
+# Format: v2 (https://golangci-lint.run/docs/configuration/file/). Requires
+# golangci-lint v2 — v1 cannot read Go 1.27 export data at all, so a v1 binary
+# reports bogus typecheck errors on every file.
+#
+# Run it from this directory, so the module is the target:
+#
+#   golangci-lint run ./...
+
+version: "2"
+
+run:
+  # Nothing here is slow, but the default (1m in v1, none in v2) is easy to
+  # trip on a cold cache.
+  timeout: 5m
+  # Lint _test.go files too: this project carries most of its behavioural
+  # contract in tests, and the tests are the only place some rules apply.
+  tests: true
+
+linters:
+  # The standard set: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    # Error handling. The codebase is deliberate about wrapping (%w) and about
+    # aggregating with errors.Join, so a non-wrapping verb is worth flagging.
+    - errorlint
+    - errname
+    # Cheap correctness rules that cost nothing to keep clean.
+    - copyloopvar
+    - durationcheck
+    - makezero
+    - reassign
+    - wastedassign
+    # Reads as style but catches real slips in a codebase this comment-heavy:
+    # a misspelled word, a duplicate word, a stray no-op.
+    - misspell
+    - dupword
+    - whitespace
+    # Modern-Go idioms the code already follows, so they stay followed.
+    - intrange
+    - usestdlibvars
+    - unconvert
+    - predeclared
+    # gocritic is broad; it currently reports nothing here, which means it is
+    # free to keep as a guard rail.
+    - gocritic
+    # Keeps future //nolint directives specific and explained.
+    - nolintlint
+    # Helpers are only worth having if they ask for *testing.T first.
+    - thelper
+    - asasalint
+
+  settings:
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+  exclusions:
+    # Generated files (and the chunks of upstream code some packages borrow)
+    # are not ours to fix.
+    generated: lax
+    rules:
+      # Tests deliberately ignore the error from Close/Stop in teardown: the
+      # assertion under test already ran, and a failure there is not the point
+      # of the test. Production code is still held to errcheck.
+      - path: _test\.go
+        linters: [errcheck]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  # Report everything: a capped list hides the second half of a pattern.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  sort-order: [file]

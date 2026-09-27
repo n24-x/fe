@@ -110,7 +110,7 @@ func (a *App) Start(mc *feconfig.MachineConfig) error {
 
 	if old != nil {
 		log.Info("app replacing runtime")
-		old.Stop() // best-effort: the old runtime is being replaced regardless
+		_ = old.Stop() // best-effort: the old runtime is being replaced regardless
 	}
 	log.Info("app started")
 	return nil

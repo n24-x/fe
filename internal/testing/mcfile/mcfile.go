@@ -27,7 +27,7 @@ func Parse(raw []byte) (*feconfig.MachineConfig, error) {
 
 	var mc feconfig.MachineConfig
 	if err := dec.Decode(&mc); err != nil {
-		return nil, fmt.Errorf("%w: %v", feconfig.ErrMalformedConfig, err)
+		return nil, fmt.Errorf("%w: %w", feconfig.ErrMalformedConfig, err)
 	}
 	return &mc, nil
 }

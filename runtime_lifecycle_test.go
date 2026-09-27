@@ -428,11 +428,11 @@ func TestRuntimeConcurrentReadAccess(t *testing.T) {
 	}()
 
 	var wg sync.WaitGroup
-	for g := 0; g < 8; g++ {
+	for range 8 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 200; i++ {
+			for range 200 {
 				for _, id := range ids {
 					if _, err := rt.Instance(id); err != nil {
 						t.Errorf("concurrent Instance(%q): %v", id, err)

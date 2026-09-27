@@ -42,7 +42,7 @@ func BenchmarkPublishDeliverOne(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		pub.Publish(benchEv{N: i})
 	}
 	waitReceived(b, &got, int64(b.N)+1)
@@ -68,7 +68,7 @@ func BenchmarkPublishDeliverEight(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		pub.Publish(benchEv{N: i})
 	}
 	waitReceived(b, &got, int64(8*b.N)+8)

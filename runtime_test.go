@@ -210,7 +210,7 @@ func TestInstanceOrder(t *testing.T) {
 		pos[spec.InstanceID] = i
 	}
 	// dep must come strictly before its dependent
-	if !(pos[a] < pos[b] && pos[b] < pos[c]) {
+	if pos[a] >= pos[b] || pos[b] >= pos[c] {
 		t.Fatalf("instanceOrder: chain order wrong, pos = %v", pos)
 	}
 	// every spec present

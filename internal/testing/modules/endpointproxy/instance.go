@@ -50,7 +50,7 @@ func (inst *Instance) acceptLoop(ln net.Listener) {
 
 // handleConnection echoes every line back to the client until it disconnects.
 func handleConnection(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	reader := bufio.NewReader(conn)
 	for {
 		line, err := reader.ReadString('\n')

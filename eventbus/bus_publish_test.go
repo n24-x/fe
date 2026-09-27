@@ -140,7 +140,7 @@ func TestPublishOnClosedBusReturnsErrorDeterministic(t *testing.T) {
 	pub := mustPublisher[int](t, c)
 	b.Close() // the client was not closed separately; closing the bus cascades
 
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		if err := pub.Publish(i); !errors.Is(err, ErrBusClosed) {
 			t.Fatalf("publish #%d on closed bus: err = %v, want ErrBusClosed", i, err)
 		}
@@ -186,7 +186,7 @@ func TestPublishReturnsNilWhenHealthy(t *testing.T) {
 	subBlocked := mustSubscribe[blockedEv](t, mustClient(t, b, "sub-blocked"), SubscribeOptions{Capacity: 1})
 	defer subBlocked.Close()
 	pubBlocked := mustPublisher[blockedEv](t, mustClient(t, b, "pub3"))
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		if err := pubBlocked.Publish(blockedEv{N: i}); err != nil {
 			t.Fatalf("blocked publish #%d: err = %v, want nil", i, err)
 		}

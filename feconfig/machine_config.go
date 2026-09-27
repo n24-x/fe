@@ -62,7 +62,7 @@ func MachineConfigValidate(mc *MachineConfig) error {
 		}
 		u, err := uuid.Parse(inst.InstanceID)
 		if err != nil {
-			return fmt.Errorf("%w: instances[%d].id %q: %v", ErrInvalidID, i, inst.InstanceID, err)
+			return fmt.Errorf("%w: instances[%d].id %q: %w", ErrInvalidID, i, inst.InstanceID, err)
 		}
 
 		if u[6]>>4 != 4 {
@@ -92,7 +92,7 @@ func MachineConfigValidate(mc *MachineConfig) error {
 			// TODO: dag.CycleError.Error() prints numeric NodeIDs (e.g. "[2 3 2]"),
 			// unreadable here. The cycle's nodes are available via e.Nodes for a
 			// future uuid-based message.
-			return fmt.Errorf("%w: dag.Graph %v", ErrCyclicDeps, err)
+			return fmt.Errorf("%w: dag.Graph %w", ErrCyclicDeps, err)
 		}
 	}
 

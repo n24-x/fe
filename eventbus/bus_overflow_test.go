@@ -93,7 +93,7 @@ func TestQueueBlocksOnlyWhenFull(t *testing.T) {
 
 	// With nobody consuming, submit 2×capacity events (values 0..7): all must
 	// succeed without blocking.
-	for i := 0; i < 2*capacity; i++ {
+	for i := range 2 * capacity {
 		done := make(chan struct{})
 		go func(v int) {
 			r.submit(sd, publishedEvent{eventType: eventType, event: v})
@@ -195,7 +195,7 @@ func TestQueueLagToleranceEndToEnd(t *testing.T) {
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		for i := 0; i < publishes; i++ {
+		for i := range publishes {
 			pub.Publish(i)
 		}
 	}()

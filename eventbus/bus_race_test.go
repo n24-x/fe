@@ -9,7 +9,7 @@ import (
 // and no event may be picked up before the registration is complete
 // (deliverFunc already in place).
 func TestRaceSubscribeVsPublish(t *testing.T) {
-	for i := 0; i < 300; i++ {
+	for range 300 {
 		b := New()
 		c := mustClient(t, b, "c")
 		p := mustPublisher[int](t, mustClient(t, b, "p"))
@@ -33,7 +33,7 @@ func TestRaceSubscribeVsPublish(t *testing.T) {
 // subscription is registered, which must not race with the subscriber
 // initializing workerWake.
 func TestRaceWorkerWake(t *testing.T) {
-	for i := 0; i < 300; i++ {
+	for range 300 {
 		b := New()
 		c := mustClient(t, b, "c")
 		p := mustPublisher[int](t, mustClient(t, b, "p"))
@@ -42,7 +42,7 @@ func TestRaceWorkerWake(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 50; j++ {
+			for j := range 50 {
 				p.Publish(j)
 			}
 		}()

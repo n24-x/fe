@@ -19,7 +19,7 @@ type Flags struct {
 // flag given by name. It panics if the flag is not
 // in the flag set.
 func (f Flags) String(name string) string {
-	return f.FlagSet.Lookup(name).Value.String()
+	return f.Lookup(name).Value.String()
 }
 
 // Bool returns the boolean representation of the
