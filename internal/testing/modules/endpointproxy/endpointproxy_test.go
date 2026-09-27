@@ -25,9 +25,12 @@ type fakeRT struct {
 
 func (f fakeRT) Instance(id string) (fe.Instance, error) { return f.inst, f.err }
 
-// Done completes the interface; a fake Runtime is never stopped, so the signal
-// it hands out is never closed (and a nil channel never fires in a select).
-func (f fakeRT) Done() <-chan struct{} { return nil }
+// neverClosed is the lifecycle signal fakeRT hands out. Done is documented
+// never to return nil, so the fake returns a real channel; nothing closes it,
+// since a fake Runtime is never stopped.
+var neverClosed = make(chan struct{})
+
+func (f fakeRT) Done() <-chan struct{} { return neverClosed }
 
 // BusClient completes the interface; endpointproxy does not use the event bus,
 // so a call would be a bug in the module under test.
