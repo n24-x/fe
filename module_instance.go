@@ -17,23 +17,19 @@ func (id InstanceID) String() string { return uuid.UUID(id).String() }
 
 // Instance is one running instance of a Module.
 //
-// It is a pure lifecycle with no parameters: everything an instance needs at
-// runtime (identity, dependency references, the lifecycle signal) is captured
-// into its fields during Provision.
+// It has a parameterless lifecycle: everything an instance needs at runtime,
+// including its identity, dependency references, and lifecycle signal, is
+// captured in its fields during Provision.
 //
-// Neither method has a timeout: Start and Stop may block for as long as the
-// module needs, and the framework neither bounds them nor watches them
-// (issue.md D37). Controlling duration is the module's own job — through a
-// goroutine it starts and its Stop reaps, a deadline on the waits it
-// controls, or whatever fits. The framework's answer to an instance that
-// never returns is the application's: a second interrupt, not a deadline
-// (issue.md D31).
+// Start and Stop have no timeout. They may block for as long as the module
+// needs, and the framework does not bound, interrupt, or otherwise monitor
+// them. Keeping them prompt is the module author's job; what to do about an
+// instance that never returns is the application's.
 //
-// TODO(next):
-// The framework drives the lifecycle (issue.md D21): Runtime.Start runs
-// instances in creation order (deps first), Runtime.Stop in reverse.
-// Framework concepts (ID/state/deps) are deliberately NOT part of this
-// interface (issue.md §8.5).
+// The framework drives the lifecycle: Runtime.Start starts instances in
+// creation order, and Runtime.Stop stops them in reverse order. Framework
+// concepts such as identity, state, and dependencies are not part of this
+// interface.
 type Instance interface {
 	Start() error
 	Stop() error
