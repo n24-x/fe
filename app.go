@@ -112,25 +112,18 @@ func (a *App) Start(mc *feconfig.MachineConfig) error {
 	return nil
 }
 
-// Stop shuts the active Runtime down (reverse start order + lifecycle signal).
-// This is the process-exit path: the application calls Stop on SIGINT/SIGTERM
-// after having started a config with Start. It is a no-op when no Runtime is
-// active, so it is safe to call unconditionally on shutdown.
+// Stop stops the App and its active Runtime. It is a no-op when no Runtime is
+// active, so it is safe to call unconditionally on the shutdown path.
 //
-// Stop is terminal: the App is single-use, and a later Start fails with
-// ErrAppStopped. That is what makes the shutdown authoritative — Stop cannot
-// be outrun by a reload that is already building a Runtime.
-//
-// Stop is the App-side counterpart of Start: Start makes a config current;
-// Stop ends the current one. (caddy's Stop is the "antithesis of Run" — this
-// is the fe equivalent.)
+// Stop is final: a stopped App cannot be started again. A later [App.Start]
+// fails with [ErrAppStopped]. The App itself has no resources to clean up; any
+// returned error comes from stopping the Runtime. The App is stopped regardless
+// of any error, so a second Stop call returns nil.
 func (a *App) Stop() error {
-	// Take the active Runtime out of the App under mu, then stop it outside:
-	// instance Stop is user code too, and holding mu across it would block
-	// Start for as long as teardown takes. Clearing it first also means
-	// concurrent Stop calls cannot both reach Runtime.Stop — only one of them
-	// gets a non-nil Runtime to stop. (Runtime.Stop is not safe to call twice
-	// concurrently: the second close of the lifecycle channel panics.)
+	// Take the Runtime out under mu, then stop it outside: Runtime.Stop runs
+	// module code and may take a long time. Clearing current first also
+	// guarantees a single caller reaches [Runtime.Stop] — it is idempotent
+	// sequentially but not safe to enter concurrently.
 	a.mu.Lock()
 	r := a.current
 	a.current = nil
