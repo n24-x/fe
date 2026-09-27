@@ -178,9 +178,9 @@ func TestNewRuntimeUnregisteredModule(t *testing.T) {
 	}
 }
 
-// TestInstanceOrder verifies the creation order derived from the dependency
-// graph: every instance comes after all of its deps, regardless of the order
-// the instances are listed in the config; and every instance is covered.
+// TestInstanceOrder verifies the order derived from the dependency graph:
+// every instance comes after all of its deps, regardless of the order the
+// instances are listed in the config; and every instance is covered.
 func TestInstanceOrder(t *testing.T) {
 	const (
 		a = "9b2e7d1c-3f4a-4b5c-8d6e-7f8a9b0c1d2e" // leaf

@@ -246,21 +246,12 @@ func (r *Runtime) provision(spec feconfig.InstanceSpec) (Instance, error) {
 	return m.(Provisioner).Provision(spec, moduleView{r: r})
 }
 
-// Start starts the Runtime: it transitions into the Running state by starting
-// every instance in creation order — deps first, matching the order recorded
-// in lifecycle.startOrder (D4).
+// Start starts the Runtime by starting every instance in dependency order.
+// It is one-shot and failure-atomic: if an instance fails to start, all
+// previously started instances are stopped in reverse order; the Runtime
+// becomes stopped and cannot be started again. The error is returned.
 //
-// Start is one-shot and failure-atomic (D3):
-//   - if an instance fails to start, every instance that already started is
-//     stopped again, in reverse start order, and the error is returned. The
-//     failing instance itself is not stopped — it never reached Started
-//     (mirrors caddy, whose Start-failure rollback stops only the started
-//     apps); closing the lifecycle signal tells any goroutines it may have
-//     spawned to wind down (there is no resource layer to release — D25).
-//   - after a failed Start the Runtime is left stopped/defunct: the lifecycle
-//     signal is closed, and Start refuses to run again.
-//   - starting an already-started (or already-stopped) Runtime is an error.
-//
+// Starting an already-started or already-stopped Runtime returns an error.
 // Not safe for concurrent use with Stop.
 func (r *Runtime) Start() error {
 	switch {
@@ -287,7 +278,7 @@ func (r *Runtime) Start() error {
 			if rollbackErr != nil {
 				startErr = errors.Join(startErr, rollbackErr)
 			}
-			// Rollback done: the Runtime is defunct (D3), so release the
+			// Rollback done: the Runtime is defunct, so release the
 			// signal and the Bus; Start refuses to run again.
 			r.lifecycle.stopped = true
 			r.cleanup()

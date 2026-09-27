@@ -83,7 +83,7 @@ func registerChain(t *testing.T, modID ModuleID, trace *lifecycleTrace, failID s
 	}))
 }
 
-// TestRuntimeStartStopOrder verifies Start runs instances in creation order
+// TestRuntimeStartStopOrder verifies Start runs instances in dependency order
 // (deps first) and Stop in reverse, regardless of the config's list order.
 func TestRuntimeStartStopOrder(t *testing.T) {
 	const modID = ModuleID("fe.test.lifecycle.order")

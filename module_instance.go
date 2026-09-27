@@ -21,13 +21,18 @@ func (id InstanceID) String() string { return uuid.UUID(id).String() }
 // including its identity, dependency references, and lifecycle signal, is
 // captured in its fields during Provision.
 //
+// If Start returns an error, the instance MUST be left stopped and require no
+// cleanup through Stop: Stop is called only after a successful Start. Once
+// Start succeeds, Stop is responsible for releasing all resources acquired by
+// the instance.
+//
 // Start and Stop have no timeout. They may block for as long as the module
 // needs, and the framework does not bound, interrupt, or otherwise monitor
 // them. Keeping them prompt is the module author's job; what to do about an
 // instance that never returns is the application's.
 //
 // The framework drives the lifecycle: Runtime.Start starts instances in
-// creation order, and Runtime.Stop stops them in reverse order. Framework
+// dependency order, and Runtime.Stop stops them in reverse order. Framework
 // concepts such as identity, state, and dependencies are not part of this
 // interface.
 type Instance interface {
