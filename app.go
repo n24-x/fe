@@ -7,20 +7,22 @@ import (
 	"github.com/n24-x/fe/feconfig"
 )
 
-// App is the user-facing handle for a Runtime and its Config. App owns the
-// active Runtime and controls its lifecycle: Start, Reload and Stop it.
+// App is the framework user's handle on the active Runtime — to a Runtime
+// what a [Module] is to an Instance. Start installs one (hot-replacing the
+// previous), Stop ends it.
 //
-// TODO(next): App does not implement Reload yet.
+// TODO(next): there is no Reload entry point yet (issue.md D5/D7); a reload is
+// Start with a new config.
 type App struct {
-	// only one start/reload at the same time.
-	startMu sync.Mutex
+	// loadMu serializes Runtime loads. [App.Start] and [App.Reload] hold it
+	// so only one Runtime can be built and installed at a time. Stop is deliberately
+	// outside it; see [App.Stop].
+	loadMu sync.Mutex
 
-	// mu guards the fields below. Never held across user code.
+	// mu guards the fields: current and stopped. Never held across user code.
 	mu sync.Mutex
-
 	// current is the active Runtime, if any.
 	current *Runtime
-
 	// stopped records that the App has been stopped.
 	// Once stopped, it cannot be started again.
 	stopped bool
@@ -86,8 +88,8 @@ func (a *App) base() *slog.Logger {
 // Start has already stopped what it started and closed its lifecycle signal —
 // and the old Runtime keeps running untouched.
 func (a *App) Start(mc *feconfig.MachineConfig) error {
-	a.startMu.Lock()
-	defer a.startMu.Unlock()
+	a.loadMu.Lock()
+	defer a.loadMu.Unlock()
 
 	log := a.base()
 	log.Info("app starting")
@@ -132,6 +134,11 @@ func (a *App) Start(mc *feconfig.MachineConfig) error {
 		old.Stop() // best-effort: the old tree is being replaced regardless
 	}
 	log.Info("app started")
+	return nil
+}
+
+// TODO
+func (a *App) Reload(mc *feconfig.MachineConfig) error {
 	return nil
 }
 
