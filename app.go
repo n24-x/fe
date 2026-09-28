@@ -10,6 +10,17 @@ import (
 // App is the framework user's handle on the active Runtime — to a Runtime
 // what a [Module] is to an Instance. Start installs one (hot-replacing the
 // previous), Stop ends it.
+//
+// # Panics
+//
+// fe does not recover. A panic in [Provisioner.Provision], [Instance.Start] or
+// [Instance.Stop] unwinds through the framework, which releases what it owns on
+// the way out — the Runtime's signal and Bus, and the instances that had
+// started — and the panic carries on to the caller.
+//
+// A panic in a goroutine an instance started is not the framework's: fe does
+// not own that goroutine, releases nothing, and handling it is the module
+// author's job.
 type App struct {
 	// loadMu serializes Runtime loads. [App.Start] holds it, so only one Runtime
 	// can be built and installed at a time. [App.Stop] is deliberately
@@ -66,12 +77,12 @@ func New(opts Options) (*App, error) {
 	return &App{name: opts.Name, logger: logger}, nil
 }
 
-// Start builds and starts a new Runtime from mc. On success, it swaps in the
-// new [Runtime] and stops the old Runtime. If building or starting the new Runtime
-// fails, Start returns the error without changing the current Runtime.
+// Start builds and starts a new Runtime from mc. On success it installs the new
+// [Runtime] and stops the one it replaced; on failure the active Runtime is
+// unchanged.
 //
-// If [App.Stop] runs while the new Runtime is being built, Start stops the
-// Runtime it built and returns [ErrAppStopped].
+// If [App.Stop] runs while the new Runtime is being built, Start stops what it
+// built and returns [ErrAppStopped].
 //
 // Start can be used to reload the App with a new config.
 func (a *App) Start(mc *feconfig.MachineConfig) error {
@@ -92,6 +103,25 @@ func (a *App) Start(mc *feconfig.MachineConfig) error {
 		log.Error("app start failed", "err", err)
 		return err
 	}
+
+	// Until the swap below this call owns the new Runtime; after the swap it
+	// owns the one being replaced. Either way it releases what it owns before
+	// returning, or while a module panic unwinds.
+	installed := false
+	var replaced *Runtime
+	defer func() {
+		doomed := r
+		if installed {
+			doomed = replaced
+		}
+		if doomed == nil {
+			return
+		}
+		if err := doomed.Stop(); err != nil {
+			log.Error("app start: releasing a runtime", "err", err)
+		}
+	}()
+
 	if err := r.Start(); err != nil {
 		log.Error("app start failed", "err", err)
 		return err
@@ -100,18 +130,14 @@ func (a *App) Start(mc *feconfig.MachineConfig) error {
 	a.mu.Lock()
 	if a.stopped {
 		a.mu.Unlock()
-		_ = r.Stop()
 		log.Info("app start/reload abandoned: app stopped")
 		return ErrAppStopped
 	}
-	old := a.current
+	replaced = a.current
 	a.current = r
+	installed = true
 	a.mu.Unlock()
 
-	if old != nil {
-		log.Info("app replacing runtime")
-		_ = old.Stop() // best-effort: the old runtime is being replaced regardless
-	}
 	log.Info("app started")
 	return nil
 }

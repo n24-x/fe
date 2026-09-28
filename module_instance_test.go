@@ -104,13 +104,21 @@ func TestRuntimeErrorsNameTheInstance(t *testing.T) {
 	}
 	assertNames(t, "Stop", err, idFailStop)
 
-	// A rolled-back Start names both: the instance that failed to start and
-	// the already-started one whose rollback Stop then failed.
+	// A failed Start names the instance that failed, and leaves the instances
+	// already started up for Stop to take down.
 	rt = one(t, idFailStop, testIDStringRaw)
 	err = rt.Start()
-	if !errors.Is(err, startBoom) || !errors.Is(err, stopBoom) {
-		t.Fatalf("rollback error = %v, want it to join both start and stop failures", err)
+	if !errors.Is(err, startBoom) {
+		t.Fatalf("Start error = %v, want it to wrap the start failure", err)
 	}
-	assertNames(t, "rollback", err, testIDStringRaw, idFailStop)
-	rt.Stop()
+	if errors.Is(err, stopBoom) {
+		t.Fatal("Start must not name the instance that only Stop will touch")
+	}
+	assertNames(t, "Start", err, testIDStringRaw)
+
+	err = rt.Stop()
+	if !errors.Is(err, stopBoom) {
+		t.Fatalf("Stop error = %v, want errors.Is(err, stopBoom)", err)
+	}
+	assertNames(t, "Stop", err, idFailStop)
 }

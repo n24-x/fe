@@ -8,16 +8,21 @@ import (
 )
 
 // appInstance is an Instance that records Start/Stop into a shared trace.
-// failStart/failStop simulate instance failures (per-module: every instance
-// of a failing module carries them).
+// failStart/failStop simulate instance failures; panicStart simulates a module
+// bug that panics instead of returning (per-module: every instance of a failing
+// module carries them).
 type appInstance struct {
-	name      string
-	trace     *lifecycleTrace
-	failStart error
-	failStop  error
+	name       string
+	trace      *lifecycleTrace
+	failStart  error
+	failStop   error
+	panicStart bool
 }
 
 func (i *appInstance) Start() error {
+	if i.panicStart {
+		panic("appInstance: Start panic")
+	}
 	if i.failStart != nil {
 		return i.failStart
 	}
@@ -125,9 +130,43 @@ func TestAppStartFailureKeepsOld(t *testing.T) {
 	if a.current != old {
 		t.Fatal("Start failure must not swap App.current")
 	}
-	// New tree's leaf started then rolled back; the old tree was never stopped.
+	// New tree's leaf started, then the App's teardown stopped it; the old tree
+	// was never stopped.
 	if want := "start:a1 start:b1 start:c1 stop:c1"; trace.got() != want {
 		t.Fatalf("trace = %q, want %q", trace.got(), want)
+	}
+}
+
+// TestAppStartPanicStopsWhatItStarted verifies the teardown runs while a module
+// panic unwinds: the instance that started before the panic is stopped, and the
+// Runtime is not installed.
+func TestAppStartPanicStopsWhatItStarted(t *testing.T) {
+	const modPanic = ModuleID("fe.test.app.panic.t1")
+	trace := new(lifecycleTrace)
+	// The chain top panics; the leaf starts first and must be stopped again.
+	RegisterModule(provMod(modPanic, func(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error) {
+		inst := &appInstance{name: map[string]string{appLeaf2ID: "c1", appTop2ID: "d1"}[spec.InstanceID], trace: trace}
+		if spec.InstanceID == appTop2ID {
+			inst.panicStart = true
+		}
+		return inst, nil
+	}))
+
+	a := new(App)
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("Start: expected the panic to reach the caller")
+			}
+		}()
+		_ = a.Start(appChain(appLeaf2ID, appTop2ID, string(modPanic)))
+	}()
+
+	if a.current != nil {
+		t.Fatal("a panicking Start must not install a Runtime")
+	}
+	if want := "start:c1 stop:c1"; trace.got() != want {
+		t.Fatalf("trace = %q, want %q (the teardown must run while unwinding)", trace.got(), want)
 	}
 }
 

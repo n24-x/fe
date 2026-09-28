@@ -107,7 +107,10 @@ func (v moduleView) BusClient(name string) (*eventbus.Client, error) {
 // lifecycle is the Runtime's lifecycle state machine:
 //
 //	created → started → stopped
-//	created → stopped            (a failed Start, or Stop before Start)
+//	created → stopped            (Stop before Start)
+//
+// A Start that fails part-way stays started: the instances that came up are
+// still up, and Stop is what takes them down.
 type lifecycle struct {
 	// startOrder is the order in which instances were created during
 	// [NewRuntime] (topological order, dependencies first), recorded as
@@ -115,13 +118,16 @@ type lifecycle struct {
 	// forward; [Runtime.Stop] walks it in reverse.
 	startOrder []InstanceID
 
-	// started reports that the Runtime is started: every instance is running.
-	// [Runtime.Stop] resets it, after using it to decide whether there is
-	// anything to stop.
-	started bool
-	// stopped reports that the Runtime reached its terminal state:
-	// [Runtime.Stop] was called, or a [Runtime.Start] attempt failed and was
-	// rolled back. A stopped Runtime cannot be started again.
+	// running is how many instances are up: always a prefix of startOrder.
+	// [Runtime.Start] grows it by one per instance; [Runtime.Stop] shrinks it
+	// back to zero.
+	running int
+
+	// attempted reports that [Runtime.Start] was called, successfully or not.
+	// Start is one-shot, so a second call is refused.
+	attempted bool
+
+	// stopped reports the terminal state, reached only by [Runtime.Stop].
 	stopped bool
 }
 
@@ -153,9 +159,9 @@ func ValidateRuntimeConfig(mc *feconfig.MachineConfig) error {
 // [Runtime.Stop], which releases its lifecycle signal and Bus without starting
 // anything.
 //
-// On failure NewRuntime returns no Runtime for the caller to Stop, so every
-// error path below cleans up after itself before returning (see cleanup()).
-func NewRuntime(mc *feconfig.MachineConfig) (*Runtime, error) {
+// On failure NewRuntime returns no Runtime for the caller to stop: it releases
+// its own resources before returning.
+func NewRuntime(mc *feconfig.MachineConfig) (rt *Runtime, err error) {
 	if err := ValidateRuntimeConfig(mc); err != nil {
 		return nil, err
 	}
@@ -174,20 +180,25 @@ func NewRuntime(mc *feconfig.MachineConfig) (*Runtime, error) {
 		log:       ensureLogger(mc.Options.Logger),
 	}
 
+	// Until the Runtime is handed back it is this function's to release — on a
+	// returned error and on a panic out of Provision alike.
+	defer func() {
+		if rt == nil {
+			r.cleanup()
+		}
+	}()
+
 	for _, spec := range order {
 		id, err := uuid.Parse(spec.InstanceID)
 		if err != nil {
-			r.cleanup() // construction failed: nothing started, so close signal + Bus
 			return nil, fmt.Errorf("fe: new runtime: invalid instance id %q: %w", spec.InstanceID, err)
 		}
 
 		inst, err := r.provision(*spec)
 		if err != nil {
-			r.cleanup()
 			return nil, fmt.Errorf("fe: new runtime: instance %q (%s): %w", spec.InstanceID, spec.ModuleID, err)
 		}
 		if inst == nil {
-			r.cleanup()
 			return nil, fmt.Errorf("fe: new runtime: instance %q (%s): module returned a nil instance", spec.InstanceID, spec.ModuleID)
 		}
 
@@ -256,60 +267,39 @@ func (r *Runtime) provision(spec feconfig.InstanceSpec) (Instance, error) {
 	return m.(Provisioner).Provision(spec, moduleView{r: r})
 }
 
-// Start starts the Runtime by starting every instance in dependency order.
-// It is one-shot and failure-atomic: if an instance fails to start, all
-// previously started instances are stopped in reverse order; the Runtime
-// becomes stopped and cannot be started again. The error is returned.
+// Start starts every instance in dependency order. It is one-shot: a second
+// call, and a call after Stop, return an error.
 //
-// Starting an already-started or already-stopped Runtime returns an error.
-// Not safe for concurrent use with Stop.
+// If an instance fails to start, the instances already started are left
+// running, and [Runtime.Stop] is what stops them.
 func (r *Runtime) Start() error {
 	switch {
 	case r.lifecycle.stopped:
 		return errors.New("fe: runtime stopped; cannot be started")
-	case r.lifecycle.started:
+	case r.lifecycle.attempted:
 		return errors.New("fe: runtime already started")
 	}
+	r.lifecycle.attempted = true
 
-	// Rollback buffer: instances started so far, stopped in reverse on error.
-	started := make([]InstanceID, 0, len(r.lifecycle.startOrder))
 	r.log.Info("runtime starting")
 	for _, id := range r.lifecycle.startOrder {
 		if err := r.instances[id].Start(); err != nil {
-			var rollbackErr error
-			for i := len(started) - 1; i >= 0; i-- {
-				stopID := started[i]
-				if err2 := r.instances[stopID].Stop(); err2 != nil {
-					rollbackErr = errors.Join(rollbackErr,
-						fmt.Errorf("fe: start: rollback stop of instance %s: %w", stopID, err2))
-				}
-			}
-			startErr := fmt.Errorf("fe: start: instance %s: %w", id, err)
-			if rollbackErr != nil {
-				startErr = errors.Join(startErr, rollbackErr)
-			}
-			// Rollback done: the Runtime is defunct, so release the
-			// signal and the Bus; Start refuses to run again.
-			r.lifecycle.stopped = true
-			r.cleanup()
-			// Recording the transition is the Runtime's business; reporting the
-			// error is the caller's (App logs it too, with more context).
-			r.log.Error("runtime start failed, rolled back", "err", startErr)
-			return startErr
+			r.log.Error("runtime start failed", "instance", id, "err", err)
+			return fmt.Errorf("fe: start: instance %s: %w", id, err)
 		}
-		started = append(started, id)
+		r.lifecycle.running++
 	}
 
-	r.lifecycle.started = true
 	r.log.Info("runtime started")
 	return nil
 }
 
-// Stop stops every started instance in reverse start order, then cleans up the
-// Runtime. It is idempotent: calls after the first return nil.
+// Stop stops the instances that started, in reverse start order, then releases
+// the Runtime. It is idempotent: calls after the first return nil.
 //
-// If Start was never completed successfully, no instances are stopped.
-// Errors from individual Stop calls are aggregated with [errors.Join].
+// That includes a Runtime whose Start failed part-way, and a Runtime that never
+// started. Errors from individual Stop calls are aggregated with
+// [errors.Join].
 //
 // Not safe for concurrent use with Start or another Stop.
 func (r *Runtime) Stop() error {
@@ -319,14 +309,14 @@ func (r *Runtime) Stop() error {
 
 	r.log.Info("runtime stopping")
 	var err error
-	if r.lifecycle.started {
-		for i := len(r.lifecycle.startOrder) - 1; i >= 0; i-- {
-			id := r.lifecycle.startOrder[i]
-			if err2 := r.instances[id].Stop(); err2 != nil {
-				err = errors.Join(err, fmt.Errorf("fe: stop: instance %s: %w", id, err2))
-			}
+	for r.lifecycle.running > 0 {
+		i := r.lifecycle.running - 1
+		id := r.lifecycle.startOrder[i]
+		err2 := r.instances[id].Stop()
+		r.lifecycle.running-- // keep the count true even if Stop panics
+		if err2 != nil {
+			err = errors.Join(err, fmt.Errorf("fe: stop: instance %s: %w", id, err2))
 		}
-		r.lifecycle.started = false
 	}
 	r.lifecycle.stopped = true
 	r.cleanup()

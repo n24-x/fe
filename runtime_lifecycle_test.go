@@ -123,12 +123,10 @@ func TestRuntimeStartStopOrder(t *testing.T) {
 	}
 }
 
-// TestRuntimeStartFailureRollsBack verifies a Start failure stops the
-// already-started instances in reverse order (D3), closes the lifecycle
-// signal, and leaves the Runtime defunct (Stop is a no-op, Start refuses
-// again).
-func TestRuntimeStartFailureRollsBack(t *testing.T) {
-	const modID = ModuleID("fe.test.lifecycle.rollback")
+// TestRuntimeStartFailureLeavesPartialTree verifies a Start failure leaves the
+// instances that had started running, and Stop stops them in reverse order.
+func TestRuntimeStartFailureLeavesPartialTree(t *testing.T) {
+	const modID = ModuleID("fe.test.lifecycle.partial")
 	boom := errors.New("boom")
 	trace := new(lifecycleTrace)
 	registerChain(t, modID, trace, testChainMidID, boom)
@@ -152,24 +150,34 @@ func TestRuntimeStartFailureRollsBack(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("Start error = %v, want errors.Is(err, boom)", err)
 	}
-	// a started before b failed → stopped again (D3 rollback); c never
-	// started; b never recorded a start.
-	if want := "start:a stop:a"; trace.got() != want {
+	// a stays up: Start does not roll back. c never started; b never recorded.
+	if want := "start:a"; trace.got() != want {
 		t.Fatalf("after failed Start, trace = %q, want %q", trace.got(), want)
 	}
-	if !isClosed(rt.doneSignal()) {
-		t.Fatal("after failed Start, the lifecycle signal is not closed")
+	if isClosed(rt.doneSignal()) {
+		t.Fatal("a failed Start must leave the signal open for the instances it started")
 	}
 
-	// The Runtime is defunct: Stop must not re-stop a, and Start must refuse.
+	// Stop is what takes the partial tree down.
 	if err := rt.Stop(); err != nil {
-		t.Fatalf("Stop after failed Start: %v", err)
+		t.Fatalf("Stop: %v", err)
 	}
 	if want := "start:a stop:a"; trace.got() != want {
-		t.Fatalf("Stop after failed Start changed trace: %q, want %q", trace.got(), want)
+		t.Fatalf("after Stop, trace = %q, want %q", trace.got(), want)
 	}
+	if !isClosed(rt.doneSignal()) {
+		t.Fatal("after Stop, the lifecycle signal is not closed")
+	}
+
+	// Start is one-shot, and a second Stop must not re-stop.
 	if err := rt.Start(); err == nil {
-		t.Fatal("Start after failed Start: expected error")
+		t.Fatal("Start after a failed Start: expected error")
+	}
+	if err := rt.Stop(); err != nil {
+		t.Fatalf("second Stop: %v", err)
+	}
+	if want := "start:a stop:a"; trace.got() != want {
+		t.Fatalf("a second Stop must not re-stop: trace = %q, want %q", trace.got(), want)
 	}
 }
 
@@ -338,16 +346,15 @@ func TestRuntimeStopAggregatesErrors(t *testing.T) {
 	}
 }
 
-// TestRuntimeStartRollbackStopError verifies that when a Start failure
-// triggers a rollback and a rollback Stop also fails, the returned error
-// aggregates both the start error and the rollback error, and the Runtime is
-// left defunct.
-func TestRuntimeStartRollbackStopError(t *testing.T) {
-	const modID = ModuleID("fe.test.lifecycle.rollbackstop")
+// TestRuntimeStartFailureThenStopError verifies the Start error names only the
+// instance that failed to start, and that Stop reports the instances it could
+// not stop.
+func TestRuntimeStartFailureThenStopError(t *testing.T) {
+	const modID = ModuleID("fe.test.lifecycle.partialstop")
 	startBoom := errors.New("start boom")
-	stopBoom := errors.New("rollback stop boom")
+	stopBoom := errors.New("stop boom")
 	trace := new(lifecycleTrace)
-	// b fails to start; a (already started) fails to stop during rollback.
+	// b fails to start; a (already started) fails to stop.
 	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error) {
 		inst := &traceInstance{name: map[string]string{
 			testChainLeafID: "a",
@@ -382,14 +389,16 @@ func TestRuntimeStartRollbackStopError(t *testing.T) {
 	if !errors.Is(err, startBoom) {
 		t.Fatalf("Start error = %v, want errors.Is(err, startBoom)", err)
 	}
+	if errors.Is(err, stopBoom) {
+		t.Fatal("Start must not report a Stop it never ran")
+	}
+
+	err = rt.Stop()
 	if !errors.Is(err, stopBoom) {
-		t.Fatalf("Start error = %v, want errors.Is(err, stopBoom) (rollback Stop failure joined)", err)
+		t.Fatalf("Stop error = %v, want errors.Is(err, stopBoom)", err)
 	}
 	if !isClosed(rt.doneSignal()) {
-		t.Fatal("the lifecycle signal must be closed after a failed Start with a rollback error")
-	}
-	if err := rt.Stop(); err != nil {
-		t.Fatalf("Stop after failed Start: %v", err)
+		t.Fatal("after Stop, the lifecycle signal is not closed")
 	}
 }
 
