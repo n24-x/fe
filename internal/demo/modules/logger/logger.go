@@ -1,15 +1,11 @@
-// Package logger is an example fe module used to drive the framework design.
-//
-// It demonstrates the module shape: a stateless Module type (registered in
-// init, providing its identity), which implements Provisioner to build a
-// fresh Instance per config spec. Config parsing is the module's own job —
-// the framework does not decode spec.Config.
 package logger
 
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
+	"os"
 
 	"github.com/n24-x/fe"
 	"github.com/n24-x/fe/feconfig"
@@ -19,17 +15,20 @@ func init() {
 	fe.RegisterModule(Module{})
 }
 
-// Module is the logger module type. It is stateless and shared.
 type Module struct{}
 
-// FeModule implements fe.Module. No side-effects.
+var (
+	_ fe.Module      = Module{}
+	_ fe.Provisioner = Module{}
+)
+
 func (Module) FeModule() fe.ModuleInfo {
 	return fe.ModuleInfo{ID: "logger"}
 }
 
-// config is the logger instance's config (a private DTO).
 type config struct {
-	Level string `json:"level"`
+	Level  string `json:"level"`
+	Output string `json:"output"`
 }
 
 // Provision implements fe.Provisioner: it parses the spec's config and
@@ -44,26 +43,82 @@ func (Module) Provision(spec feconfig.InstanceSpec, rt fe.RuntimeAccess) (fe.Ins
 	if cfg.Level == "" {
 		cfg.Level = "info" // default
 	}
-	return &Instance{level: cfg.Level}, nil
+	return &Instance{level: cfg.Level, output: cfg.Output}, nil
 }
 
-// Instance is a logger module instance. Its fields are runtime state only;
-// config lives in the DTO above.
+// LogProvider is what another module depends on to log. A consumer asserts to
+// this instead of to the concrete *Instance, so either can be replaced.
+type LogProvider interface {
+	// Logger returns the logger, or a discarding one before Start.
+	Logger() *slog.Logger
+	// Named returns the logger with name attached, marking the caller.
+	Named(name string) *slog.Logger
+}
+
 type Instance struct {
-	level string
+	level  string
+	output string
+	logger *slog.Logger
+	closer io.Closer
 }
 
-// Start implements fe.Instance.
+var (
+	_ fe.Instance = (*Instance)(nil)
+	_ LogProvider = (*Instance)(nil)
+)
+
+// discard stands in before Start has built the logger, so Logger and Named
+// never hand out nil.
+var discard = slog.New(slog.DiscardHandler)
+
 func (i *Instance) Start() error {
-	log.Printf("[logger] started (level=%s)", i.level)
+	level, err := parseLevel(i.level)
+	if err != nil {
+		return err
+	}
+
+	var w io.Writer = os.Stdout
+	if i.output != "" {
+		f, err := os.OpenFile(i.output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return fmt.Errorf("logger: opening output %q: %w", i.output, err)
+		}
+		w = f
+		i.closer = f
+	}
+
+	i.logger = slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})).
+		With("application", "mydemo")
 	return nil
 }
-
-// Stop implements fe.Instance.
 func (i *Instance) Stop() error {
-	log.Printf("[logger] stopped")
-	return nil
+	if i.closer == nil {
+		return nil
+	}
+	err := i.closer.Close()
+	i.closer = nil
+	return err
 }
 
-// Level returns the configured log level.
-func (i *Instance) Level() string { return i.level }
+func (i *Instance) Logger() *slog.Logger {
+	if i.logger == nil {
+		return discard // before Start
+	}
+	return i.logger
+}
+
+func (i *Instance) Named(name string) *slog.Logger {
+	return i.Logger().With("instance", name)
+}
+
+func (i *Instance) Level() string  { return i.level }
+func (i *Instance) Output() string { return i.output }
+
+// parseLevel parses a slog level name, case-insensitively.
+func parseLevel(s string) (slog.Level, error) {
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(s)); err != nil {
+		return 0, fmt.Errorf("logger: %w", err)
+	}
+	return level, nil
+}

@@ -9,7 +9,8 @@
             "id": "9b2e7d1c-3f4a-4b5c-8d6e-7f8a9b0c1d2e",
             "mod_id": "logger",
             "config": {
-                "level": "INFO"
+                "level": "INFO",
+                "output": "./output.log"
             },
             "deps": []
         },
@@ -17,9 +18,12 @@
             "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
             "mod_id": "dns",
             "config": {
-                "enable_cache": true
+                "enable_cache": true,
+                "logger_inst": "9b2e7d1c-3f4a-4b5c-8d6e-7f8a9b0c1d2e"
             },
-            "deps": []
+            "deps": [
+                "9b2e7d1c-3f4a-4b5c-8d6e-7f8a9b0c1d2e"
+            ]
         },
         {
             "id": "7b1d2a5e-9f4c-4a8b-8c3d-2e5f1a6b7c8d",
