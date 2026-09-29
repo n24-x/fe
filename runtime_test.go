@@ -7,6 +7,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/n24-x/fe/eventbus"
 	"github.com/n24-x/fe/feconfig"
 )
 
@@ -268,5 +269,72 @@ func TestNewRuntimeCyclicDeps(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("NewRuntime error = %v, want it to mention the cycle", err)
+	}
+}
+
+// TestNewRuntimeBusDisabled verifies a config that disables the Bus still
+// yields a fully drivable Runtime: it starts and stops, its Stop releases the
+// Runtime instead of panicking on a nil Bus, and instance code asking for a
+// client is refused with ErrBusDisabled.
+func TestNewRuntimeBusDisabled(t *testing.T) {
+	const modID = ModuleID("fe.test.newruntime.busdisabled")
+	RegisterModule(provMod(modID, nil))
+
+	mc := &feconfig.MachineConfig{
+		Options: feconfig.Options{Bus: eventbus.BusOptions{Disable: true}},
+		Instances: []feconfig.InstanceSpec{
+			{
+				InstanceID: "3f2a6c1e-5d47-4b90-9e21-7c8a4b0d1f23",
+				ModuleID:   string(modID),
+			},
+		},
+	}
+
+	rt, err := NewRuntime(mc)
+	if err != nil {
+		t.Fatalf("NewRuntime: unexpected error: %v", err)
+	}
+	if err := rt.Start(); err != nil {
+		t.Fatalf("Start: unexpected error: %v", err)
+	}
+
+	if _, err := rt.busClient("test"); !errors.Is(err, eventbus.ErrBusDisabled) {
+		t.Fatalf("busClient on a disabled Bus: err = %v, want ErrBusDisabled", err)
+	}
+
+	if err := rt.Stop(); err != nil {
+		t.Fatalf("Stop: unexpected error: %v", err)
+	}
+
+	// Stop is idempotent, so the release path runs once — and must be safe there
+	// too, disabled Bus or not.
+	if err := rt.Stop(); err != nil {
+		t.Fatalf("second Stop: unexpected error: %v", err)
+	}
+}
+
+// TestNewRuntimeBusDisabledProvisionError verifies the failure path of
+// NewRuntime releases its own resources on a disabled Bus: the deferred
+// cleanup must report the Provision error, not panic on a nil Bus.
+func TestNewRuntimeBusDisabledProvisionError(t *testing.T) {
+	const modID = ModuleID("fe.test.newruntime.busdisabled.proverr")
+	wantErr := errors.New("boom")
+	RegisterModule(provMod(modID, func(spec feconfig.InstanceSpec, rt RuntimeAccess) (Instance, error) {
+		return nil, wantErr
+	}))
+
+	mc := &feconfig.MachineConfig{
+		Options: feconfig.Options{Bus: eventbus.BusOptions{Disable: true}},
+		Instances: []feconfig.InstanceSpec{
+			{
+				InstanceID: "5a8c3e0f-2b19-4d76-8c41-9e7b3a5d2f10",
+				ModuleID:   string(modID),
+			},
+		},
+	}
+
+	_, err := NewRuntime(mc)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("NewRuntime error = %v, want errors.Is(err, wantErr)", err)
 	}
 }

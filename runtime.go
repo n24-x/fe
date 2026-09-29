@@ -55,6 +55,11 @@ type Runtime struct {
 	// [NewRuntime] from the config's [feconfig.Options.Bus], released by
 	// cleanup(). Instances never touch it directly — they get a client of their
 	// own from [RuntimeAccess.BusClient].
+	//
+	// It is never nil: a config that disables the Bus
+	// ([eventbus.BusOptions.Disable]) yields a disabled Bus whose clients all
+	// fail with [eventbus.ErrBusDisabled] and whose Close is a no-op, so the
+	// Runtime needs no special case anywhere.
 	bus *eventbus.Bus
 
 	// log records this Runtime's lifecycle. It is snapshotted from
@@ -83,7 +88,8 @@ type RuntimeAccess interface {
 	// BusClient opens a Bus client for the calling instance. name is a
 	// human-readable label for debug logs and client-scoped errors; it is not
 	// required to be unique. Once the Runtime has been stopped the Bus is closed,
-	// so this returns [eventbus.ErrBusClosed].
+	// so this returns [eventbus.ErrBusClosed]; when the config disabled the Bus it
+	// returns [eventbus.ErrBusDisabled] instead.
 	//
 	// Every call returns a fresh client, owned by the caller: close it when the
 	// instance is done with it. Closing is not required — the Bus closes any
@@ -325,7 +331,7 @@ func (r *Runtime) Stop() error {
 }
 
 // cleanup releases the Runtime's framework-owned resources: it closes the
-// lifecycle signal and the Bus.
+// lifecycle signal and the Bus (a no-op when the config disabled the Bus).
 //
 // It MUST be called exactly once per Runtime.
 func (r *Runtime) cleanup() {
@@ -352,7 +358,8 @@ func (r *Runtime) doneSignal() <-chan struct{} {
 	return r.done
 }
 
-// busClient opens a new Bus client named name, for the calling instance.
-func (r *Runtime) busClient(name string) (client *eventbus.Client, err error) {
+// busClient opens a new Bus client named name, for the calling instance. It
+// fails with [eventbus.ErrBusDisabled] when the config disabled the Bus.
+func (r *Runtime) busClient(name string) (*eventbus.Client, error) {
 	return r.bus.NewClient(name)
 }

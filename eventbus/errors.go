@@ -3,6 +3,7 @@ package eventbus
 import "errors"
 
 var (
+	ErrBusDisabled      = errors.New("eventbus: bus is disabled")
 	ErrBusClosed        = errors.New("eventbus: bus is closed")
 	ErrClientClosed     = errors.New("eventbus: client is closed")
 	ErrPublisherClosed  = errors.New("eventbus: publisher is closed")

@@ -21,13 +21,16 @@ type Bus struct {
 	workersMu sync.Mutex
 	workers   map[uint64]*clientWorker
 
-	closed atomic.Bool
+	closed   atomic.Bool
+	disabled bool
 
 	counters busCounters
 }
 
 // BusOptions configures a Bus.
 type BusOptions struct {
+	Disable bool `json:"disable"`
+
 	// RouterCapacity is the capacity of the router's event input channel.
 	RouterCapacity int `json:"router_capacity"`
 }
@@ -41,6 +44,10 @@ type busCounters struct {
 func New() *Bus { return NewWithOptions(BusOptions{}) }
 
 func NewWithOptions(opts BusOptions) *Bus {
+	if opts.Disable {
+		return &Bus{disabled: true}
+	}
+
 	capacity := opts.RouterCapacity
 	if capacity <= 0 {
 		capacity = DefaultRouterCapacity
@@ -63,6 +70,10 @@ func NewWithOptions(opts BusOptions) *Bus {
 }
 
 func (b *Bus) NewClient(name string) (*Client, error) {
+	if b.disabled {
+		return nil, ErrBusDisabled
+	}
+
 	b.clientsMu.Lock()
 	defer b.clientsMu.Unlock()
 	if b.closed.Load() {
@@ -82,6 +93,11 @@ func (b *Bus) NewClient(name string) (*Client, error) {
 }
 
 func (b *Bus) Close() {
+	// A disabled Bus owns nothing: no router to close, no client to release.
+	if b.disabled {
+		return
+	}
+
 	if !b.closed.CompareAndSwap(false, true) {
 		return
 	}
