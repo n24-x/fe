@@ -31,8 +31,6 @@ type config struct {
 	Output string `json:"output"`
 }
 
-// Provision implements fe.Provisioner: it parses the spec's config and
-// returns a fresh, fully-formed Instance.
 func (Module) Provision(spec feconfig.InstanceSpec, rt fe.RuntimeAccess) (fe.Instance, error) {
 	var cfg config
 	if len(spec.Config) > 0 {
@@ -46,12 +44,8 @@ func (Module) Provision(spec feconfig.InstanceSpec, rt fe.RuntimeAccess) (fe.Ins
 	return &Instance{level: cfg.Level, output: cfg.Output}, nil
 }
 
-// LogProvider is what another module depends on to log. A consumer asserts to
-// this instead of to the concrete *Instance, so either can be replaced.
 type LogProvider interface {
-	// Logger returns the logger, or a discarding one before Start.
 	Logger() *slog.Logger
-	// Named returns the logger with name attached, marking the caller.
 	Named(name string) *slog.Logger
 }
 
@@ -67,8 +61,6 @@ var (
 	_ LogProvider = (*Instance)(nil)
 )
 
-// discard stands in before Start has built the logger, so Logger and Named
-// never hand out nil.
 var discard = slog.New(slog.DiscardHandler)
 
 func (i *Instance) Start() error {
@@ -114,7 +106,6 @@ func (i *Instance) Named(name string) *slog.Logger {
 func (i *Instance) Level() string  { return i.level }
 func (i *Instance) Output() string { return i.output }
 
-// parseLevel parses a slog level name, case-insensitively.
 func parseLevel(s string) (slog.Level, error) {
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(s)); err != nil {
