@@ -24,7 +24,9 @@ func (id InstanceID) String() string { return uuid.UUID(id).String() }
 // If Start returns an error, the instance MUST be left stopped and require no
 // cleanup through Stop: Stop is called only after a successful Start. Once
 // Start succeeds, Stop is responsible for releasing all resources acquired by
-// the instance. A Start that panics falls under the same rule.
+// the instance. A Start that panics falls under the same rule, and the instance
+// releases what it acquired in its own defer: the framework never calls Stop
+// for it.
 //
 // A panic in a goroutine the instance started is the module author's to handle:
 // the framework does not own that goroutine and releases nothing for it.
