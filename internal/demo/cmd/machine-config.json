@@ -41,7 +41,7 @@
             "mod_id": "endpoint.proxy.server",
             "config": {
                 "listen": "127.0.0.1",
-                "port": 18080,
+                "port": 6688,
                 "domain_resolver": "7b1d2a5e-9f4c-4a8b-8c3d-2e5f1a6b7c8d"
             },
             "deps": [
